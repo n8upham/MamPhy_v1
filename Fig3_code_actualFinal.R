@@ -5,19 +5,46 @@
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-# Run and visualize time slice analyses
+# Run MamPhy time slice analyses
 ######
-# - Load in 1 tree of 100
+# - In parallel, load in 1 tree of 100
 # - Calculate ES and DR on per-tip basis
 # - Make time slices every 5 Ma to create clades
-# - Calculate per-slice, per-clade summary values 
-# - Now in parallel, and with doing the PGLS also...
+# - Relabel the backbone "slicePhys" uniting  time slice clades
+# - Calculate per-slice, per-clade summary values-- including singletons
+# - end 100-tree loop
 
-#  Make SIMULATIONS of the full MamPhy for testing these null expectations.
+# Run MamPhy PGLS -- aim to ** explain variation RICHNESS ** using timeslice clade summary stats 
 ######
-# - Generate simulations
-# - Calculate per-slice, per-clade summary values 
-# - Now in parallel, and with doing the PGLS also...
+# - In parallel, read back in slice phylo backbones (14 slices at 5 Ma intervals)
+# - Load in age and rate slice summaries for 1 of 100 trees (standardize predictors)
+# - Setup empty dataframes to receive PGLS results 
+# - Nest the loop of *10* predictor vars
+# - Do univariate and multivariate analyses
+
+
+# For SIMULATIONS, do time slice analyses
+######
+# - Generate simulations of the full MamPhy for testing null expectations.
+# - Relabel the backbone "slicePhys" uniting  time slice clades
+
+# For SIMULATIONS, calculate per-slice, per-clade summary values 
+######
+# - load back in 1 tree of 100
+# - Calculate ES and DR on per-tip basis
+# - Calculate per-slice, per-clade summary values-- including singletons
+
+
+# For SIMULATIONS, run PGLS to ** explain variation RICHNESS ** using timeslice clade summary stats 
+######
+# - In parallel, read back in slice phylo backbones (14 slices at 5 Ma intervals)
+# - Load in age and rate slice summaries for 1 of 100 trees (standardize predictors)
+# - Setup empty dataframes to receive PGLS results 
+# - Nest the loop of *10* predictor vars
+# - Do univariate and multivariate analyses
+
+
+
 # For SIMS-- summarize and re-load all
 
 # For ALL-- Make the actual data SCATTER plots...
@@ -30,12 +57,12 @@ library(moments); library(nlme); library(ape); library(picante); library(phytool
 library(foreach);library(doSNOW)
 
 # directory and source
-dirname = "/mnt/data/personal/nateu/Nate_Backup/MamPhy_BDvr_Fixed-n-Free_fullPosteriors/timeSlices_CladeDiv"
-setwd(dirname)
+#dirname = "/mnt/data/personal/nateu/Nate_Backup/MamPhy_BDvr_Fixed-n-Free_fullPosteriors/timeSlices_CladeDiv"
+#setwd(dirname)
 source("DR_functions.R")
 
 # open cluster for parallel processing
-cl = makeCluster(15, type = 'SOCK', outfile="")
+cl = makeCluster(100, type = 'MPI', outfile="")
 registerDoSNOW(cl)
 
 # start parallel loop
@@ -45,9 +72,13 @@ foreach(i=1:ntrees, .packages=c('geiger','moments', 'nlme', 'ape', 'picante', 'p
 # which backbone?
 bbone<- "NDexp" #"FBD" # 
 
-# load in stats about TIPS
-cladesDR<-read.table("MamPhy_5911sp_tipDR-range-Pantheria-EltonTraits-mass_extended_HR_Disp_ALL-comments.txt", header=TRUE)
+# load in stats about TIP SAMPLING
+cladesDR<-read.table(paste("MamPhy_5911sp_tipGenFamOrdCladeGenesSampPC_",bbone,"_DRstats_DRtreeLABELS.txt",sep=""), header=TRUE)
 head(cladesDR)
+
+# load in stats about TIP TRAITS
+###
+#tipDataAll<-read.table(file="MamPhy_5911sp_tipDR-range-Pantheria-EltonTraits-mass_extended_HR_Disp_ALL-comments.txt", header=TRUE)
 
 #==================
 # Load in 1 tree of 100
@@ -56,9 +87,10 @@ mamPhy<-ladderize(drop.tip(read.nexus(paste("MamPhy_fullPosterior_BDvr_pcsFIXED_
 #write.tree(mamPhy,file=paste("MamPhy_fullPosterior_BDvr_pcsFIXED_",bbone,"_sample100_",i,"_newick.tre",sep=""))
 tree1=scan(paste("MamPhy_fullPosterior_BDvr_pcsFIXED_",bbone,"_sample100_",i,"_newick.tre",sep=""), what="",sep="\n",quiet=TRUE,skip=0,comment.char="#") 
 
-#==================
-# Calculate ES and DR on per-tip basis
-#==================
+
+##==================
+## Calculate ES and DR on per-tip basis
+##==================
 # gives pairwise clade matrix from CAIC function
 clade_matrix = readCAIC(tree1)
 
@@ -69,6 +101,7 @@ res = cbind.data.frame(DR,ES)
 res1 = res[order(rownames(res)),]
 
 write.table(res1, file=paste(bbone,"_sample100_",i,"_DRtips.txt",sep=""))
+res1<-read.table(file=paste(bbone,"_sample100_",i,"_DRtips.txt",sep=""))
 
 #=======================================
 # Make time slices every 5 Ma to create clades
@@ -80,42 +113,69 @@ numSlices = upTo/sliceEvery
 root=max(node.age(mamPhy)$ages)
 
 allCladeSets<-vector("list",length=numSlices)
+slicePhys<-vector("list",length=numSlices)
 allCladeSetNames<-vector("list",length=numSlices)
 for (j in 1:numSlices){
-	allCladeSets[[j]]<-treeSlice(mamPhy, slice=root-(sliceEvery*j), trivial=FALSE)
 	allCladeSetNames[[j]]<-paste(sliceEvery*j,"Ma",sep="")
+	# make tipward slice clades
+	allCladeSets[[j]]<-treeSlice(mamPhy, slice=root-(sliceEvery*j), trivial=TRUE) # now keeping trivial (single tips)
+		# write clades to per-slice files
+		write.tree(allCladeSets[[j]],file=paste(bbone,"_sample100_",i,"_timeslice_cladeTreesWithSingletons_",(sliceEvery*j),"Ma.trees",sep=""))
+	# make rootward slice *backbones*
+	slicePhys[[j]]<-treeSlice(mamPhy, slice=root-(sliceEvery*j), trivial=TRUE, orientation="rootwards") # toward root, slicePhys
+}
+
+# re-label the slicePhys with standard names
+# Note: need to match tips with nodes to re-label these properly! 
+for (j in 1:numSlices){
+	cladeSet<-allCladeSets[[j]]
+	newTipNames<-paste(i,"_",j,"_",c(1:length(cladeSet)),sep="")
+	
+	for (k in 1:length(cladeSet)){
+		cladeSp<-cladeSet[[k]]$tip.label
+		if(length(cladeSp)==1){ 
+			slicePhys[[j]]$tip.label[which(slicePhys[[j]]$tip.label==cladeSp)]<-newTipNames[k]
+		} else {
+			node <- getMRCA(mamPhy, cladeSp) # find the MRCA node of those species
+			slicePhys[[j]]$tip.label[which(slicePhys[[j]]$tip.label==node)]<-newTipNames[k]
+		}
+	}
+}
+
+# write slice phys
+for(j in 1:length(slicePhys)){
+	write.tree(slicePhys[[j]], file=paste("MamPhy_fullPosterior_BDvr_pcsFIXED_",bbone,"_tree_",i,"_CORRECT-sliceRootwardSingletons_slicePhy-5to70Ma_by5.trees",sep=""), append=TRUE)
 }
 
 # record clade sizes per slice
-lengths<-vector()
+allLengths_i<-vector("list",length(allCladeSets))
 for (j in 1:length(allCladeSets)){
-	lengths[j]<-length(allCladeSets[[j]])
-}
-names(lengths)<-allCladeSetNames 
-lengths
-write.table(lengths, file=paste(bbone,"_sample100_",i,"_timeslice_Lengths.txt",sep=""))
-
-# write clades to per-slice files
-for (j in 1:length(allCladeSets)){
-	trees<-allCladeSets[[j]]
-	write.tree(trees,file=paste("MamPhy_fullPosterior_BDvr_pcsFIXED_",bbone,"_sample100_",i,"_slice",allCladeSetNames[[j]],"_newick.trees",sep=""))
+	lengths<-vector()
+	for(k in 1:length(allCladeSets[[j]])){
+		lengths[k]<-length(allCladeSets[[j]][[k]]$tip.label)
 	}
+allLengths_i[[j]]<-lengths
+}
+names(allLengths_i)<-allCladeSetNames 
+save(allLengths_i, file=paste(bbone,"_sample100_",i,"_timeslice_cladeRichnesses_wSingletons.Rda",sep=""))
 
 ## load back in
-#allCladeSets<-vector("list",length(allCladeSetNames))
-#for (j in 1:length(allCladeSetNames)){
-#	allCladeSets[[j]]<-read.tree(file=paste("MamPhy_fullPosterior_BDvr_pcsFIXED_",bbone,"_sample100_",i,"_slice",allCladeSetNames[[j]],"_newick.trees",sep=""))
-#	}
+allCladeSets<-vector("list",length=numSlices)
+for (j in 1:numSlices){
+	allCladeSets[[j]]<-read.tree(file=paste(bbone,"_sample100_",i,"_timeslice_cladeTreesWithSingletons_",(sliceEvery*j),"Ma.trees",sep=""))
+	}
 
 #===================================
-# Calculate per-slice, per-clade summary values 
+# Calculate per-SLICE, per-clade summary values 
 #===================================
 
 # get node times for tree
 btimes<-branching.times(mamPhy)
 
 # yule function
-ymle = function(tree){ (.subset2(tree,3)-1L)/sum(.subset2(tree,2)) } # this takes the # of number of nodes in a tree (minus 1) / sum of branch lengths.
+ymle = function(tree){ (.subset2(tree,3)-1L)/sum(.subset2(tree,2)) } # this take the # of number of nodes in a tree (minus 1) / sum of branch lengths.
+# use this one if RE-LOADING the slice clades::
+#ymle = function(tree){ (.subset2(tree,2)-1L)/sum(.subset2(tree,4)) } # this take the # of number of nodes in a tree (minus 1) / sum of branch lengths.
 
 # do per-slice, per-clade calcs
 for(j in 1:length(allCladeSets)){
@@ -133,25 +193,25 @@ cladeSet<-allCladeSets[[j]]
 	BD_Lam<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD_Mu<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD_Div<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
+	BD_Turn<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD.ms0<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD.ms0p5<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD.ms0p9<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
-	BD.ms0_stem<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
-	BD.ms0p5_stem<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
-	BD.ms0p9_stem<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	
 	for (k in 1:length(cladeSet)){
 	cladeSp<-cladeSet[[k]]$tip.label
 		x<-res1[match(cladeSp,rownames(res1)),"DR"]
 		DR_harm[k,] <- 1/(mean(1/x))
+		percentSamp[k,] <- length(which(cladesDR[match(cladeSp,cladesDR$tiplabel),"samp"]=="sampled"))/length(cladeSp)
+		richness[k,] <- length(cladeSp)
+	if(length(cladeSp) > 1){
 		DR_cv[k,] <- (sd(x)/mean(x))*100
 		DR_skew[k,] <- skewness(x)
 		DR_kurt[k,] <- kurtosis(x)
-		percentSamp[k,] <- length(which(cladesDR[match(cladeSp,cladesDR$tiplabel),"samp"]=="sampled"))/length(cladeSp)
-		richness[k,] <- length(cladeSp)
 		node <- getMRCA(mamPhy, cladeSp)
 		MRCA[k,] <- btimes[node-5911] #taking the height of SAMPLED tree
-	}
+		}
+
 	if (length(cladeSp) > 2) {
 	# Yule model
 		PB_Div[k,]<-ymle(cladeSet[[k]])
@@ -160,487 +220,134 @@ cladeSet<-allCladeSets[[j]]
 		BD_Lam[k,]<-bd$para[[2]]/(1-bd$para[[1]])
 		BD_Mu[k,]<-bd$para[[1]]*(bd$para[[2]]/(1-bd$para[[1]]))
 		BD_Div[k,]<-bd$para[[2]]
+		BD_Turn[k,]<-bd$para[[1]]
 		# BD Mag and Sand
-	    BD.ms0_stem[k,]<-bd.ms(phy=cladeSet[[k]], missing=0, epsilon=0, crown=FALSE) # Assuming no extinction
-    	BD.ms0p5_stem[k,]<-bd.ms(phy=cladeSet[[k]], missing=0, epsilon=0.5, crown=FALSE) # Assuming medium extinction 
-     	BD.ms0p9_stem[k,]<-bd.ms(phy=cladeSet[[k]], missing=0, epsilon=0.9, crown=FALSE) # Assuming high extinction
 		cladeSet[[k]]$root.edge<-0
 	    BD.ms0[k,]<-bd.ms(phy=cladeSet[[k]], missing=0, epsilon=0, crown=TRUE) # Assuming no extinction
     	BD.ms0p5[k,]<-bd.ms(phy=cladeSet[[k]], missing=0, epsilon=0.5, crown=TRUE) # Assuming medium extinction 
      	BD.ms0p9[k,]<-bd.ms(phy=cladeSet[[k]], missing=0, epsilon=0.9, crown=TRUE) # Assuming high extinction
-		} else NULL
+		}
 	}
-	res2<-cbind(DR_harm, DR_cv, DR_skew, DR_kurt, percentSamp, richness, MRCA, PB_Div, BD_Lam, BD_Mu, BD_Div, BD.ms0, BD.ms0p5, BD.ms0p9, BD.ms0_stem, BD.ms0p5_stem, BD.ms0p9_stem, i, j*5)
-	colnames(res2)<-c("DR_harm","DR_cv", "DR_skew", "DR_kurt", "percentSamp", "richness", "MRCA", "PB_Div", "BD_Lam", "BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9", "BD.ms0_stem", "BD.ms0p5_stem", "BD.ms0p9_stem", "tree", "slice")
+
+	res2<-cbind.data.frame(DR_harm, DR_skew, DR_kurt, DR_cv, percentSamp, richness, MRCA, PB_Div, BD_Lam, BD_Mu, BD_Div, BD_Turn, BD.ms0, BD.ms0p5, BD.ms0p9, i, j*-5)
+
+	colnames(res2)<-c("DR_harm","DR_skew", "DR_kurt", "DR_cv", "percentSamp", "richness", "MRCA", "PB_Div", "BD_Lam", "BD_Mu", "BD_Div", "BD_Turn", "BD.ms0", "BD.ms0p5", "BD.ms0p9", "tree", "time")
+
+	rownames(res2)<-paste(i,"_",j,"_",c(1:length(cladeSet)),sep="") # same as the slicePhy names
 	
-	rownames(res2)<-paste(i,"_",j,"_",c(1:length(res2[,1])),sep="")
+	write.table(res2,paste(bbone,"_sample100_",i,"_slice",allCladeSetNames[[j]],"_cladeSTATS_Age-n-Rate_andSingletons.txt",sep=""))
+} # end 1-tree loop across all 14 slices (every 5 Ma)
 
-	write.table(res2,paste(bbone,"_sample100_",i,"_slice",allCladeSetNames[[j]],"cladeSTATS.txt",sep=""))
-}
 
-# create slice phys
-slicePhys<-vector("list",length(allCladeSets))
-for (k in 1:length(allCladeSets)){
-cladeReps<-vector()
-for (j in 1:length(allCladeSets[[k]])){
-	cladeSp<-allCladeSets[[k]][[j]]$tip.label
-	cladeReps[j]<-cladeSp[1]
-	}
-toDrop<-setdiff(mamPhy$tip.label,cladeReps)
-slicePhys[[k]]<-drop.tip(mamPhy,toDrop)
-slicePhys[[k]]$tip.label<-paste(i,"_",k,"_",c(1:length(slicePhys[[k]]$tip.label)),sep="")
-}
+} # end 100-tree loop
 
-# write slice phys
-for(j in 1:length(slicePhys)){
-	write.tree(slicePhys[[j]], file=paste("MamPhy_fullPosterior_BDvr_pcsFIXED_",bbone,"_tree_",i,"_slicePhy-5to70Ma_by5.trees",sep=""), append=TRUE)
-}
+
+
 ###########
 #######
 
-# do the PGLS
-#######
-# load back in tables
-results<-vector("list",length(allCladeSetNames))
-for (j in 1: length(allCladeSetNames)){
-	res<-read.table(paste(bbone,"_sample100_",i,"_slice",allCladeSetNames[[j]],"cladeSTATS.txt",sep=""), header=TRUE)
-	results[[j]]<-res
-}
 
-# UNIVARIATE first
-sliceTimes<-seq(-5,-70,-5)
-uniPGLS_allSlopes<-data.frame(matrix(NA, nrow = length(results), ncol = 13),row.names=sliceTimes)
-colnames(uniPGLS_allSlopes)<-c("MRCA","DR_harm","DR_skew","PB_Div","BD_Lam","BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9", "BD.ms0_stem", "BD.ms0p5_stem", "BD.ms0p9_stem")
-
-uniPGLS_allInts<-data.frame(matrix(NA, nrow = length(results), ncol = 13),row.names=sliceTimes)
-colnames(uniPGLS_allInts)<-c(paste("i_",1:13,sep=""))
-
-uniPGLS_allPs<-data.frame(matrix(NA, nrow = length(results), ncol = 13),row.names=sliceTimes)
-colnames(uniPGLS_allPs)<-c(paste("p_",1:13,sep=""))
-
-# MULTIVARIATE next
-sliceTimes<-seq(-5,-70,-5)
-partSlopesPGLS_All<-data.frame(matrix(NA, nrow = length(results), ncol = 8),row.names=sliceTimes)
-colnames(partSlopesPGLS_All)<-c("int","MRCA","DR_harm","DR_skew","AIC","Pval1","Pval2","Pval3")
-
-for (j in 1:length(results)){
-	rownames(results[[j]])<-slicePhys[[j]]$tip.label
-	cladeData<-treedata(slicePhys[[j]],na.omit(results[[j]]))
-	dat<-as.data.frame(cladeData$data)
-
-	form<-(log(richness) ~ MRCA + DR_harm + DR_skew)
-	fit<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-	sum<-summary(fit)
-
-	partSlopesPGLS_All[j,1]<-round(sum$coef[[1]],digits=3)
-	partSlopesPGLS_All[j,2]<-round(sum$coef[[2]],digits=3)
-	partSlopesPGLS_All[j,3]<-round(sum$coef[[3]],digits=3)
-	partSlopesPGLS_All[j,4]<-round(sum$coef[[4]],digits=3)
-	partSlopesPGLS_All[j,5]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_All[j,6]<-round(sum$tTable[14], digits=3)
-	partSlopesPGLS_All[j,7]<-round(sum$tTable[15], digits=3)
-	partSlopesPGLS_All[j,8]<-round(sum$tTable[16], digits=3)
-
-	vars<-c("MRCA","DR_harm","DR_skew","PB_Div","BD_Lam","BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9", "BD.ms0_stem", "BD.ms0p5_stem", "BD.ms0p9_stem")
-	for(k in 1:length(uniPGLS_allSlopes)){
-		form<-as.formula(paste("log(richness) ~ ", vars[k],sep=""))
-		fit1<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-		sum1<-summary(fit1)
-		
-		uniPGLS_allInts[j,k]<-round(sum1$coef[[1]],digits=3)
-		uniPGLS_allSlopes[j,k]<-round(sum1$coef[[2]],digits=3)
-		uniPGLS_allPs[j,k]<-round(sum1$tTable[8], digits=3)
-	}	
-}
-write.table(partSlopesPGLS_All,paste(bbone,"_sample100_",i,"_PGLSmulti_timeSlice_5Ma-to-70Ma_partSlopes.txt",sep=""))
-
-write.table(uniPGLS_allInts,paste(bbone,"_sample100_",i,"_PGLS_timeSlice_5Ma-to-70Ma_uniINTS.txt",sep=""))
-write.table(uniPGLS_allSlopes,paste(bbone,"_sample100_",i,"_PGLS_timeSlice_5Ma-to-70Ma_uniSLOPES.txt",sep=""))
-write.table(uniPGLS_allPs,paste(bbone,"_sample100_",i,"_PGLS_timeSlice_5Ma-to-70Ma_uniPs.txt",sep=""))
-
-}
-
-
-## ^ cool, that should be working then for FREQUENTIST approach. Boom.
-###
-# RE-do the PGLS as SCALED-- so that the EFFECT sizes are comparable.
-
-# BASIC SETUP, run in PARALLEL.
-library(moments)
-library(nlme)
-library(ape)
-library(picante)
-library(phytools)
-library(geiger)
-
-setwd("/mnt/data/personal/nateu/Nate_Backup/MamPhy_BDvr_Fixed-n-Free_fullPosteriors/Diversification_analyses-Condamine/")
-setwd("/Volumes/MercurySSD-240GB/Users/NateSSD/Vertlife_CURRENT/Diversification_analyses-Condamine/_mamPhy_global_100trees/trees_1to100_brokenOut")
-
+# do the PGLS - UNIVAR and MULTIVAR
+# ==================================
+# intialize
+library(ape); library(phytools); library(picante); library(geiger); library(moments); library(nlme)
 library(foreach);library(doSNOW)
-cl = makeCluster(15, type = 'SOCK', outfile="")
-registerDoSNOW(cl)
-
-ntrees=100
 
 # which backbone?
 bbone<- "NDexp" #"FBD" # 
 
+# get the clade names
 sliceEvery = 5 # million years
 upTo = 70 # million years
 numSlices = upTo/sliceEvery
-
 allCladeSetNames<-vector("list",length=numSlices)
 for (j in 1:numSlices){
 	allCladeSetNames[[j]]<-paste(sliceEvery*j,"Ma",sep="")
 }
 
+# start cluster
+cl = makeCluster(100, type = 'MPI')
+registerDoSNOW(cl)
+
+ntrees=100
 foreach(i=1:ntrees, .packages=c('geiger','moments', 'nlme', 'ape', 'picante', 'phytools'), .combine=cbind, .verbose=TRUE) %dopar% {
 
 # read back in slice phys
-slicePhys<-read.tree(file=paste("MamPhy_fullPosterior_BDvr_pcsFIXED_",bbone,"_tree_",i,"_slicePhy-5to70Ma_by5.trees",sep=""))
-
-# load back in tables
-# Z-score STANDARDIZED from RAW
- resultsSCALE<-vector("list",length(allCladeSetNames))
- for (j in 1: length(allCladeSetNames)){
- 	res<-read.table(paste(bbone,"_sample100_",i,"_slice",allCladeSetNames[[j]],"cladeSTATS.txt",sep=""), header=TRUE)
- 	vars<-cbind(res[,7],res[,1],res[,3],res[,6],res[,8:17])
- 	varsScale<-scale(vars, center=TRUE,scale=TRUE)
- 	resultsSCALE[[j]]<-cbind(res$richness,varsScale)
- 	colnames(resultsSCALE[[j]])<-c("richness","MRCA","DR_harm","DR_skew","richnessZ",colnames(res[,8:17]))
- }
+# ========================
+slicePhys<-read.tree(file=paste("MamPhy_fullPosterior_BDvr_pcsFIXED_",bbone,"_tree_",i,"_CORRECT-sliceRootwardSingletons_slicePhy-5to70Ma_by5.trees",sep=""))
 
 
-# RE_SCALED -- MULTI- and UNI-VARIATE
-sliceTimes<-seq(-5,-70,-5)
-partSlopesPGLS_All<-data.frame(matrix(NA, nrow = length(results), ncol = 8),row.names=sliceTimes)
-colnames(partSlopesPGLS_All)<-c("int","mrcaSQ","DR_harm","DR_skew","AIC","Pval1","Pval2","Pval3")
-partSlopesPGLS_12<-data.frame(matrix(NA, nrow = length(results), ncol = 6),row.names=sliceTimes)
-colnames(partSlopesPGLS_12)<-c("int","mrcaSQ","DR_harm","AIC","Pval1","Pval2")
-
-uniPGLS_allSlopes<-data.frame(matrix(NA, nrow = length(results), ncol = 11),row.names=sliceTimes)
-colnames(uniPGLS_allSlopes)<-c("mrcaSQ","MRCA","DR_harm","DR_skew","PB_Div","BD_Lam","BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9")
-uniPGLS_allInts<-data.frame(matrix(NA, nrow = length(results), ncol = 11),row.names=sliceTimes)
-colnames(uniPGLS_allInts)<-c(paste("i_",1:11,sep=""))
-uniPGLS_allPs<-data.frame(matrix(NA, nrow = length(results), ncol = 11),row.names=sliceTimes)
-colnames(uniPGLS_allPs)<-c(paste("p_",1:11,sep=""))
-
-for (j in 1:length(results)){
-	rownames(results[[j]])<-slicePhys[[j]]$tip.label
-	cladeData<-treedata(slicePhys[[j]],na.omit(results[[j]]))
-	dat<-as.data.frame(cladeData$data)
-
-	form<-(log(richness) ~ mrcaSQ + DR_harm + DR_skew)
-	fit<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-	sum<-summary(fit)
-
-	partSlopesPGLS_All[j,1]<-round(sum$coef[[1]],digits=3)
-	partSlopesPGLS_All[j,2]<-round(sum$coef[[2]],digits=3)
-	partSlopesPGLS_All[j,3]<-round(sum$coef[[3]],digits=3)
-	partSlopesPGLS_All[j,4]<-round(sum$coef[[4]],digits=3)
-	partSlopesPGLS_All[j,5]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_All[j,6]<-round(sum$tTable[14], digits=3)
-	partSlopesPGLS_All[j,7]<-round(sum$tTable[15], digits=3)
-	partSlopesPGLS_All[j,8]<-round(sum$tTable[16], digits=3)
-
-	form<-(log(richness) ~ mrcaSQ + DR_harm)
-	fit2<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-	sum<-summary(fit2)
-
-	partSlopesPGLS_12[j,1]<-round(sum$coef[[1]],digits=3)
-	partSlopesPGLS_12[j,2]<-round(sum$coef[[2]],digits=3)
-	partSlopesPGLS_12[j,3]<-round(sum$coef[[3]],digits=3)
-	partSlopesPGLS_12[j,4]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_12[j,5]<-round(sum$tTable[11], digits=3)
-	partSlopesPGLS_12[j,6]<-round(sum$tTable[12], digits=3)
-
-	vars<-c("mrcaSQ","MRCA","DR_harm","DR_skew","PB_Div","BD_Lam","BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9")
-	for(k in 1:length(uniPGLS_allSlopes)){
-		form<-as.formula(paste("log(richness) ~ ", vars[k],sep=""))
-		fit1<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-		sum1<-summary(fit1)
-		
-		uniPGLS_allInts[j,k]<-round(sum1$coef[[1]],digits=3)
-		uniPGLS_allSlopes[j,k]<-round(sum1$coef[[2]],digits=3)
-		uniPGLS_allPs[j,k]<-round(sum1$tTable[8], digits=3)
-	}	
-
-}
-#write.table(partSlopesPGLS_All,paste(bbone,"_sample100_",i,"_PGLSmulti_timeSlices_mrcaSQ_SCALED_partSlopes123.txt",sep=""))
-#write.table(partSlopesPGLS_12,paste(bbone,"_sample100_",i,"_PGLSmulti_timeSlices_mrcaSQ_SCALED_partSlopes12.txt",sep=""))
-#
-#uniPGLS<-cbind(uniPGLS_allInts,uniPGLS_allSlopes,uniPGLS_allPs)
-#write.table(uniPGLS,paste(bbone,"_sample100_",i,"_PGLS_timeSlices_mrcaSQ_SCALED_uniINTS_uniSLO_uniP.txt",sep=""))
-
-write.table(partSlopesPGLS_All,paste(bbone,"_sample100_",i,"_PGLSmulti_timeSlices_mrcaSQ_RAW_partSlopes123.txt",sep=""))
-write.table(partSlopesPGLS_12,paste(bbone,"_sample100_",i,"_PGLSmulti_timeSlices_mrcaSQ_RAW_partSlopes12.txt",sep=""))
-
-uniPGLS<-cbind(uniPGLS_allInts,uniPGLS_allSlopes,uniPGLS_allPs)
-write.table(uniPGLS,paste(bbone,"_sample100_",i,"_PGLS_timeSlices_mrcaSQ_RAW_uniINTS_uniSLO_uniP.txt",sep=""))
-
-}
-
-
-
-##
-# With the RE-arrangement of variables too...
-##
-# RE_SCALED -- MULTI- and UNI-VARIATE
-sliceTimes<-seq(-5,-70,-5)
-partSlopesPGLS_All<-data.frame(matrix(NA, nrow = length(results), ncol = 8),row.names=sliceTimes)
-colnames(partSlopesPGLS_All)<-c("int","MRCA","DR_harm","DR_skew","AIC","Pval1","Pval2","Pval3")
-
-#partSlopesPGLS_213<-data.frame(matrix(NA, nrow = length(results), ncol = 8),row.names=sliceTimes)
-#colnames(partSlopesPGLS_213)<-c("int","DR_harm","MRCA","DR_skew","AIC","Pval1","Pval2","Pval3")
-#
-#partSlopesPGLS_321<-data.frame(matrix(NA, nrow = length(results), ncol = 8),row.names=sliceTimes)
-#colnames(partSlopesPGLS_321)<-c("int","DR_skew","DR_harm","MRCA","AIC","Pval1","Pval2","Pval3")
-
-partSlopesPGLS_12BD<-data.frame(matrix(NA, nrow = length(results), ncol = 8),row.names=sliceTimes)
-colnames(partSlopesPGLS_12BD)<-c("int","MRCA","DR_harm","BD_Div","AIC","Pval1","Pval2","Pval3")
-
-uniPGLS_allSlopes<-data.frame(matrix(NA, nrow = length(results), ncol = 13),row.names=sliceTimes)
-colnames(uniPGLS_allSlopes)<-c("MRCA","DR_harm","DR_skew","PB_Div","BD_Lam","BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9", "BD.ms0_stem", "BD.ms0p5_stem", "BD.ms0p9_stem")
-uniPGLS_allInts<-data.frame(matrix(NA, nrow = length(results), ncol = 13),row.names=sliceTimes)
-colnames(uniPGLS_allInts)<-c(paste("i_",1:13,sep=""))
-uniPGLS_allPs<-data.frame(matrix(NA, nrow = length(results), ncol = 13),row.names=sliceTimes)
-colnames(uniPGLS_allPs)<-c(paste("p_",1:13,sep=""))
-
-for (j in 1:length(results)){
-	rownames(results[[j]])<-slicePhys[[j]]$tip.label
-	cladeData<-treedata(slicePhys[[j]],na.omit(results[[j]]))
-	dat<-as.data.frame(cladeData$data)
-
-	form<-(log(richness) ~ MRCA + DR_harm + DR_skew)
-	fit<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-	sum<-summary(fit)
-
-	partSlopesPGLS_All[j,1]<-round(sum$coef[[1]],digits=3)
-	partSlopesPGLS_All[j,2]<-round(sum$coef[[2]],digits=3)
-	partSlopesPGLS_All[j,3]<-round(sum$coef[[3]],digits=3)
-	partSlopesPGLS_All[j,4]<-round(sum$coef[[4]],digits=3)
-	partSlopesPGLS_All[j,5]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_All[j,6]<-round(sum$tTable[14], digits=3)
-	partSlopesPGLS_All[j,7]<-round(sum$tTable[15], digits=3)
-	partSlopesPGLS_All[j,8]<-round(sum$tTable[16], digits=3)
-
-	form<-(log(richness) ~ DR_harm + MRCA + DR_skew)
-	fit2<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-	sum<-summary(fit2)
-
-	partSlopesPGLS_213[j,1]<-round(sum$coef[[1]],digits=3)
-	partSlopesPGLS_213[j,2]<-round(sum$coef[[2]],digits=3)
-	partSlopesPGLS_213[j,3]<-round(sum$coef[[3]],digits=3)
-	partSlopesPGLS_213[j,4]<-round(sum$coef[[4]],digits=3)
-	partSlopesPGLS_213[j,5]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_213[j,6]<-round(sum$tTable[14], digits=3)
-	partSlopesPGLS_213[j,7]<-round(sum$tTable[15], digits=3)
-	partSlopesPGLS_213[j,8]<-round(sum$tTable[16], digits=3)
-
-	form<-(log(richness) ~ DR_skew + DR_harm + MRCA)
-	fit3<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-	sum<-summary(fit3)
-
-	partSlopesPGLS_321[j,1]<-round(sum$coef[[1]],digits=3)
-	partSlopesPGLS_321[j,2]<-round(sum$coef[[2]],digits=3)
-	partSlopesPGLS_321[j,3]<-round(sum$coef[[3]],digits=3)
-	partSlopesPGLS_321[j,4]<-round(sum$coef[[4]],digits=3)
-	partSlopesPGLS_321[j,5]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_321[j,6]<-round(sum$tTable[14], digits=3)
-	partSlopesPGLS_321[j,7]<-round(sum$tTable[15], digits=3)
-	partSlopesPGLS_321[j,8]<-round(sum$tTable[16], digits=3)
-
-	form<-(log(richness) ~ MRCA + DR_harm + BD_Div)
-	fit4<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-	sum<-summary(fit4)
-
-	partSlopesPGLS_12BD[j,1]<-round(sum$coef[[1]],digits=3)
-	partSlopesPGLS_12BD[j,2]<-round(sum$coef[[2]],digits=3)
-	partSlopesPGLS_12BD[j,3]<-round(sum$coef[[3]],digits=3)
-	partSlopesPGLS_12BD[j,4]<-round(sum$coef[[4]],digits=3)
-	partSlopesPGLS_12BD[j,5]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_12BD[j,6]<-round(sum$tTable[14], digits=3)
-	partSlopesPGLS_12BD[j,7]<-round(sum$tTable[15], digits=3)
-	partSlopesPGLS_12BD[j,8]<-round(sum$tTable[16], digits=3)
-
-	vars<-c("MRCA","DR_harm","DR_skew","PB_Div","BD_Lam","BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9", "BD.ms0_stem", "BD.ms0p5_stem", "BD.ms0p9_stem")
-	for(k in 1:length(uniPGLS_allSlopes)){
-		form<-as.formula(paste("log(richness) ~ ", vars[k],sep=""))
-		fit1<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-		sum1<-summary(fit1)
-		
-		uniPGLS_allInts[j,k]<-round(sum1$coef[[1]],digits=3)
-		uniPGLS_allSlopes[j,k]<-round(sum1$coef[[2]],digits=3)
-		uniPGLS_allPs[j,k]<-round(sum1$tTable[8], digits=3)
-	}	
-
-}
-write.table(partSlopesPGLS_All,paste(bbone,"_sample100_",i,"_PGLSmulti_timeSlices_SCALED_partSlopes123.txt",sep=""))
-write.table(partSlopesPGLS_213,paste(bbone,"_sample100_",i,"_PGLSmulti_timeSlices_SCALED_partSlopes213.txt",sep=""))
-write.table(partSlopesPGLS_321,paste(bbone,"_sample100_",i,"_PGLSmulti_timeSlices_SCALED_partSlopes321.txt",sep=""))
-write.table(partSlopesPGLS_12BD,paste(bbone,"_sample100_",i,"_PGLSmulti_timeSlices_SCALED_partSlopes12BD.txt",sep=""))
-
-uniPGLS<-cbind(uniPGLS_allInts,uniPGLS_allSlopes,uniPGLS_allPs)
-write.table(uniPGLS,paste(bbone,"_sample100_",i,"_PGLS_timeSlices_SCALED_uniINTS_uniSLO_uniP.txt",sep=""))
-
-}
-
-###
-# Do with including ** percentSamp ** as a major variable too...
-##
-# written in as:
-##
-res2<-cbind(DR_harm, DR_cv, DR_skew, DR_kurt, percentSamp, richness, MRCA, PB_Div, BD_Lam, BD_Mu, BD_Div, BD.ms0, BD.ms0p5, BD.ms0p9, BD.ms0_stem, BD.ms0p5_stem, BD.ms0p9_stem, i, j*5)
-colnames(res2)<-c("DR_harm","DR_cv", "DR_skew", "DR_kurt", "percentSamp", "richness", "MRCA", "PB_Div", "BD_Lam", "BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9", "BD.ms0_stem", "BD.ms0p5_stem", "BD.ms0p9_stem", "tree", "slice")
-rownames(res2)<-paste(i,"_",j,"_",c(1:length(res2[,1])),sep="")
-write.table(res2,paste(bbone,"_sample100_",i,"_slice",allCladeSetNames[[j]],"cladeSTATS.txt",sep=""))
-
-# so now redo the PGLS with that var.
-# in PARALLEL.
-#### 
-# BASIC SETUP, run in PARALLEL.
-setwd("/mnt/data/personal/nateu/Nate_Backup/MamPhy_BDvr_Fixed-n-Free_fullPosteriors/Diversification_analyses-Condamine/")
-#setwd("/Volumes/MercurySSD-240GB/Users/NateSSD/Vertlife_CURRENT/Diversification_analyses-Condamine/_mamPhy_global_100trees/trees_1to100_brokenOut")
-library(moments); library(nlme); library(ape); library(picante); library(phytools); library(geiger)
-
-library(foreach);library(doSNOW)
-cl = makeCluster(15, type = 'SOCK', outfile="")
-registerDoSNOW(cl)
-
-ntrees=100
-
-# which backbone?
-bbone<- "NDexp" #"FBD" # 
-
-sliceEvery = 5 # million years
-upTo = 70 # million years
-numSlices = upTo/sliceEvery
-
-allCladeSetNames<-vector("list",length=numSlices)
-for (j in 1:numSlices){
-	allCladeSetNames[[j]]<-paste(sliceEvery*j,"Ma",sep="")
-}
-
-all<-c(1:100)
-finished<-c(3, 5, 7, 8, 11, 13, 17, 18, 19, 22, 23, 24, 25, 27, 29, 30, 33, 34, 35, 36, 37, 40, 41, 42, 45, 46, 48, 51, 52, 53, 54, 60, 62, 63, 65, 66, 67, 68, 70, 71, 74, 77, 78, 81, 82, 83, 88, 90, 91, 92, 93, 94, 95, 96, 97, 98, 100)
-finished2<-c(1, 4, 5, 6, 7, 10, 12, 16, 17, 18, 20, 21, 22, 23, 26, 28, 29, 30, 32, 33, 34, 36, 37, 38, 39, 40)
-finished3<-c(2, 7, 8, 9, 10, 13, 15, 16, 17, 19, 20, 21, 23, 24, 25, 26, 27)
-#finished4<-c(4, 5, 6, 7, 10, 12, 13, 14, 16, 17, 18, 20, 21, 22, 23, 24)
-#allFin<-c(finished,finished2, finished3)#,finished4)
-
-allFinTotal<-c(1, 1, 1, 3, 3, 3, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 13, 13, 13, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19, 19, 19, 21, 21, 21, 22, 22, 22, 23, 23, 23, 24, 24, 24, 25, 25, 25, 27, 27, 27, 29, 29, 29, 30, 30, 30, 32, 32, 32, 33, 33, 33, 34, 34, 34, 35, 35, 35, 36, 36, 36, 37, 37, 37, 38, 38, 38, 39, 39, 39, 40, 40, 40, 41, 41, 41, 42, 42, 42, 44, 44, 44, 45, 45, 45, 46, 46, 46, 47, 47, 47, 48, 48, 48, 49, 49, 49, 50, 50, 50, 51, 51, 51, 52, 52, 52, 53, 53, 53, 54, 54, 54, 57, 57, 57, 59, 59, 59, 60, 60, 60, 61, 61, 61, 62, 62, 62, 63, 63, 63, 64, 64, 64, 65, 65, 65, 66, 66, 66, 67, 67, 67, 68, 68, 68, 70, 70, 70, 71, 71, 71, 72, 72, 72, 73, 73, 73, 74, 74, 74, 75, 75, 75, 77, 77, 77, 78, 78, 78, 79, 79, 79, 80, 80, 80, 81, 81, 81, 82, 82, 82, 83, 83, 83, 84, 84, 84, 85, 85, 85, 86, 86, 86, 88, 88, 88, 90, 90, 90, 91, 91, 91, 92, 92, 92, 93, 93, 93, 94, 94, 94, 95, 95, 95, 96, 96, 96, 97, 97, 97, 98, 98, 98, 100, 100, 100)
-allFin<-unique(allFinTotal)
-remaining<-setdiff(all,allFin)
-
-#foreach(i=1:ntrees, .packages=c('geiger','moments', 'nlme', 'ape', 'picante', 'phytools'), .combine=cbind, .verbose=TRUE) %dopar% {
-
-foreach(i=remaining, .packages=c('geiger','moments', 'nlme', 'ape', 'picante', 'phytools'), .combine=cbind, .verbose=TRUE) %dopar% {
-
-# read back in slice phys
-slicePhys<-read.tree(file=paste("MamPhy_fullPosterior_BDvr_pcsFIXED_",bbone,"_tree_",i,"_slicePhy-5to70Ma_by5.trees",sep=""))
-
-# multiply edges by 100 for corPagel
-modTrees<-vector("list",length(slicePhys))
-for (j in 1:length(slicePhys)){
-	modTree<-slicePhys[[j]]
-	modTree$edge.length<-modTree$edge.length*100
-	modTrees[[j]]<-modTree
-}
-
-# Z-score STANDARDIZED from RAW
+# Load in slice clade summaries and STANDARDIZE
+# ========================================
 results<-vector("list",length(allCladeSetNames))
-for (j in 1: length(allCladeSetNames)){
-	res<-read.table(paste(bbone,"_sample100_",i,"_slice",allCladeSetNames[[j]],"cladeSTATS.txt",sep=""), header=TRUE)
-	vars<-res[,1:14]
-	varsScale<-scale(vars, center=TRUE,scale=TRUE)
-	results[[j]]<-cbind(res$richness,varsScale)
-	colnames(results[[j]])<-c("richness","DR_harm","DR_cv","DR_skew","DR_kurt","percentSamp","richnessZ",colnames(res[,7:14]))
+for (q in 1: length(allCladeSetNames)){
+	# Load in
+	res<-read.table(paste(bbone,"_sample100_",i,"_slice",allCladeSetNames[[q]],"_cladeSTATS_Age-n-Rate_andSingletons.txt",sep=""), header=TRUE)
+	# select RESPONSE vars
+	RESP<-log(res[,"richness"])
+	# select PREDICTOR vars
+	PRED<-res[,c(1:2,4:5,7:12)] # excluding KURTOSIS, excluding the BD.ms vars
+		# STANDARDIZE predictors as Z-SCORES
+		predScale<-scale(PRED, center=TRUE,scale=TRUE)
+
+	# Join together RESP and standardized PRED
+	results[[q]]<-cbind(RESP,predScale[,1:length(PRED)])
+	colnames(results[[q]])<-c("logRichness",colnames(PRED))
 }
 
-# ACTUAL data...
-#results<-vector("list",length(allCladeSetNames))
-#for (j in 1: length(allCladeSetNames)){
-#	res<-read.table(paste(bbone,"_sample100_",i,"_slice",allCladeSetNames[[j]],"cladeSTATS.txt",sep=""), header=TRUE)
-#	results[[j]]<-res[,1:14]
-#}
 
-# MULTI- and UNI-VARIATE
-sliceTimes<-seq(-5,-70,-5)
-partSlopesPGLS_All<-data.frame(matrix(NA, nrow = length(results), ncol = 16),row.names=sliceTimes)
-colnames(partSlopesPGLS_All)<-c("int","MRCA","DR_harm","DR_skew","SE1","SE2","SE3","SE4","Lam_low","Lam_mean","Lam_up","AIC","Pval1","Pval2","Pval3","Pval4")
-partSlopesPGLS_All_Per<-data.frame(matrix(NA, nrow = length(results), ncol = 17),row.names=sliceTimes)
-colnames(partSlopesPGLS_All_Per)<-c("int","MRCA","DR_harm","DR_skew","percentSamp","SE1","SE2","SE3","SE4","SE5","Lam","AIC","Pval1","Pval2","Pval3","Pval4","Pval5")
-
-uniPGLS_allSlopes<-data.frame(matrix(NA, nrow = length(results), ncol = 11),row.names=sliceTimes)
-colnames(uniPGLS_allSlopes)<-c("MRCA","DR_harm","DR_skew","percentSamp","PB_Div","BD_Lam","BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9")
-uniPGLS_allSEs<-data.frame(matrix(NA, nrow = length(results), ncol = 11),row.names=sliceTimes)
-colnames(uniPGLS_allSEs)<-c(paste("SE_",1:11,sep=""))
-uniPGLS_allInts<-data.frame(matrix(NA, nrow = length(results), ncol = 11),row.names=sliceTimes)
-colnames(uniPGLS_allInts)<-c(paste("i_",1:11,sep=""))
-uniPGLS_allPs<-data.frame(matrix(NA, nrow = length(results), ncol = 11),row.names=sliceTimes)
-colnames(uniPGLS_allPs)<-c(paste("p_",1:11,sep=""))
-uniPGLS_allLams<-data.frame(matrix(NA, nrow = length(results), ncol = 11),row.names=sliceTimes)
-colnames(uniPGLS_allLams)<-c(paste("lam_",1:11,sep=""))
-
+# Run for ONE of 14 time slices 
+# ===============================
 for (j in 1:length(results)){
-	#rownames(results[[j]])<-slicePhys[[j]]$tip.label
-	#cladeData<-treedata(slicePhys[[j]],na.omit(results[[j]]))
-	cladeData<-treedata(modTrees[[j]],na.omit(results[[j]]))
-	dat<-as.data.frame(cladeData$data)
-	#dat<-as.data.frame(na.omit(results[[j]]))
+#j=2 # 10 Ma time slice
+#j=7 # 35 Ma time slice
+#j=9 # 45 Ma time slice
+#j=12 # 60 Ma time slice
+cladeData<-treedata(slicePhys[[j]],na.omit(results[[j]])) 
+dat<-as.data.frame(cladeData$data)
 
-	form<-(log(richness) ~ MRCA + DR_harm + DR_skew)
-#	fit<-gls(form, data=dat, method="ML")
-#	fit<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-		for (p in seq(0,1,by=0.01)) {possibleError <- tryCatch(
-		      gls(form, correlation=corPagel(value=p,phy=cladeData$phy), data=dat, method="ML"),
-		      error=function(e) e)
-		if(inherits(possibleError, "gls")) break		
-		if(inherits(possibleError, "error")) next}
-		fit<-possibleError
-	sum<-summary(fit)
-	#int95s<-intervals(fit,which="var-cov")
 
-	for(k in 1:8){
-	partSlopesPGLS_All[j,k]<-round(sum$tTable[k],digits=3)
-	}
-	#partSlopesPGLS_All[j,9]<-round(int95s[[1]][1],digits=3)
-	partSlopesPGLS_All[j,10]<-round(sum$modelStruct[[1]][1],digits=3)#int95s[[1]][2],digits=3)
-	#partSlopesPGLS_All[j,11]<-round(int95s[[1]][3],digits=3)
-	partSlopesPGLS_All[j,12]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_All[j,13]<-round(sum$tTable[13], digits=3)
-	partSlopesPGLS_All[j,14]<-round(sum$tTable[14], digits=3)
-	partSlopesPGLS_All[j,15]<-round(sum$tTable[15], digits=3)
-	partSlopesPGLS_All[j,16]<-round(sum$tTable[16], digits=3)
+# Setup empty dataframes to receive PGLS results 
+# ==============================================
+# UNIVARIATE first
+sliceTimes<-seq(-5,-70,-5)
 
-	form2<-(log(richness) ~ MRCA + DR_harm + DR_skew + percentSamp)
-#	fit2<-gls(form2, data=dat, method="ML")
-#	fit2<-gls(form2, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-		for (p in seq(0,1,by=0.01)) {possibleError <- tryCatch(
-		      fit2<-gls(form2, correlation=corPagel(value=p,phy=cladeData$phy), data=dat, method="ML"),
-		      error=function(e) e)
-		if(inherits(possibleError, "gls")) break		
-		if(inherits(possibleError, "error")) next}
-		fit2<-possibleError
-	sum2<-summary(fit2)
+predictors<-colnames(PRED) # focusing on continuous vars, trophic vars
+nCols<-length(predictors)
 
-	for(k in 1:10){
-	partSlopesPGLS_All_Per[j,k]<-round(sum2$tTable[k],digits=3)
-	}
-	partSlopesPGLS_All_Per[j,11]<-round(sum2$modelStruct[[1]][1],digits=3)
-	partSlopesPGLS_All_Per[j,12]<-round(sum2$AIC,digits=0)
-	partSlopesPGLS_All_Per[j,13]<-round(sum2$tTable[16], digits=3)
-	partSlopesPGLS_All_Per[j,14]<-round(sum2$tTable[17], digits=3)
-	partSlopesPGLS_All_Per[j,15]<-round(sum2$tTable[18], digits=3)
-	partSlopesPGLS_All_Per[j,16]<-round(sum2$tTable[19], digits=3)
-	partSlopesPGLS_All_Per[j,17]<-round(sum2$tTable[20], digits=3)
+uniPGLS_allSlopes<-data.frame(matrix(NA, nrow = length(results), ncol = nCols),row.names=sliceTimes)
+colnames(uniPGLS_allSlopes)<-predictors
+uniPGLS_allSEs<-data.frame(matrix(NA, nrow = length(results), ncol = nCols),row.names=sliceTimes)
+colnames(uniPGLS_allSEs)<-c(paste("SE_",1:nCols,sep=""))
+uniPGLS_allInts<-data.frame(matrix(NA, nrow = length(results), ncol = nCols),row.names=sliceTimes)
+colnames(uniPGLS_allInts)<-c(paste("i_",1:nCols,sep=""))
+uniPGLS_allPs<-data.frame(matrix(NA, nrow = length(results), ncol = nCols),row.names=sliceTimes)
+colnames(uniPGLS_allPs)<-c(paste("p_",1:nCols,sep=""))
+uniPGLS_allLams<-data.frame(matrix(NA, nrow = length(results), ncol = nCols),row.names=sliceTimes)
+colnames(uniPGLS_allLams)<-c(paste("lam_",1:nCols,sep=""))
 
-	vars<-c("MRCA","DR_harm","DR_skew","percentSamp","PB_Div","BD_Lam","BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9")
-	for(k in 1:length(uniPGLS_allSlopes)){
-		form<-as.formula(paste("log(richness) ~ ", vars[k],sep=""))
+uniPGLS<-data.frame(matrix(NA, nrow = 1, ncol = nCols*5),row.names="logRichness")
+colnames(uniPGLS)<-c(colnames(uniPGLS_allInts),colnames(uniPGLS_allSlopes),colnames(uniPGLS_allPs),colnames(uniPGLS_allSEs),colnames(uniPGLS_allLams))
+
+# MULTIVARIATE next
+sliceTimes<-seq(-5,-70,-5)
+
+multiPGLS<-data.frame(matrix(NA, nrow = 1, ncol = 13),row.names="logRichness")
+colnames(multiPGLS)<-c("int","MRCA","DR_harm","DR_skew","SE1","SE2","SE3","SE4","lam","Pval1","Pval2","Pval3","Pval4")
+multiPGLS_Per<-data.frame(matrix(NA, nrow = 1, ncol = 16),row.names="logRichness")
+colnames(multiPGLS_Per)<-c("int","MRCA","DR_harm","DR_skew","percentSamp","SE1","SE2","SE3","SE4","SE5","lam","Pval1","Pval2","Pval3","Pval4","Pval5")
+
+
+# Nest the loop of *nCols* predictor vars
+# ===============================
+
+# UNIVARIATE
+	for(k in 1:length(predictors)){
+
+		form<-as.formula(paste("logRichness", " ~ ", predictors[k], sep=""))
 #		fit1<-gls(form, data=dat, method="ML")
 #		fit1<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
-		for (p in seq(0,1,by=0.01)) {possibleError <- tryCatch(
+		for (p in c(0.5,seq(0,1,by=0.01))) {possibleError <- tryCatch(
 		      gls(form, correlation=corPagel(value=p,phy=cladeData$phy), data=dat, method="ML"),
 		      error=function(e) e)
 		if(inherits(possibleError, "gls")) break		
@@ -649,36 +356,873 @@ for (j in 1:length(results)){
 
 		sum1<-summary(fit1)
 		
-		uniPGLS_allInts[j,k]<-round(sum1$tTable[1], digits=3)
-		uniPGLS_allSlopes[j,k]<-round(sum1$tTable[2], digits=3)
-		uniPGLS_allSEs[j,k]<-round(sum1$tTable[4], digits=3)
-		uniPGLS_allPs[j,k]<-round(sum1$tTable[8], digits=3)
-		uniPGLS_allLams[j,k]<-round(sum1$modelStruct[[1]][[1]], digits=3)
-	}	
+		uniPGLS_allInts[j,k]<-round(sum1$tTable[1], digits=6)
+		uniPGLS_allSlopes[j,k]<-round(sum1$tTable[2], digits=6)
+		uniPGLS_allSEs[j,k]<-round(sum1$tTable[4], digits=6)
+		uniPGLS_allPs[j,k]<-round(sum1$tTable[8], digits=6)
+		uniPGLS_allLams[j,k]<-round(sum1$modelStruct[[1]][[1]], digits=6)		
+
+		} # cycles each of *nCols* predictors
+
+		uniPGLS<-cbind(uniPGLS_allInts,uniPGLS_allSlopes,uniPGLS_allPs,uniPGLS_allSEs,uniPGLS_allLams)[j,]
+
+	#corr<-"NO_TREE"
+	#corr<-"BROWNIAN"
+	corr<-"PAGEL"
+	sliceN<-allCladeSetNames[[j]] #"ALL" #"45Ma-only" #"10to60Ma" # # #"35Ma-only" ##"all" #"60Ma"#"all" #
+
+	write.table(uniPGLS,paste(bbone,"_sample100_",i,"_PGLS_",corr,"_explaining-Richness_perSlice_",sliceN,"_SCALED_uniVar_Correct-rootwardWithSingle_10preds.txt",sep=""))
+
+# MULTIVARIATE
+# 3 var
+	form<-(logRichness ~ MRCA + DR_harm + DR_skew)
+	#fit1<-gls(form2, data=dat, method="ML")
+	#fit1<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
+		for (p in c(0.5,seq(0,1,by=0.01))) {possibleError <- tryCatch(
+		      gls(form, correlation=corPagel(value=p,phy=cladeData$phy), data=dat, method="ML"),
+		      error=function(e) e)
+		if(inherits(possibleError, "gls")) break		
+		if(inherits(possibleError, "error")) next}
+		fit1<-possibleError
+
+		sum1<-summary(fit1)
+
+	for(k in 1:8){
+	multiPGLS[k]<-round(sum1$tTable[k],digits=6)
+	}
+	multiPGLS[9]<-round(sum1$modelStruct[[1]][1],digits=6)
+	multiPGLS[10]<-round(sum1$tTable[13], digits=6)
+	multiPGLS[11]<-round(sum1$tTable[14], digits=6)
+	multiPGLS[12]<-round(sum1$tTable[15], digits=6)
+	multiPGLS[13]<-round(sum1$tTable[16], digits=6)
+
+	write.table(multiPGLS,paste(bbone,"_sample100_",i,"_PGLS_",corr,"_explaining-Richness_perSlice_",sliceN,"_SCALED_multiVar_Correct-rootwardWithSingle_age-DRmean-DRskew.txt",sep=""))
+
+# MULTIVARIATE
+# 3 var + percentSampling
+	form2<-(logRichness ~ MRCA + DR_harm + DR_skew + percentSamp)
+	#fit2<-gls(form2, data=dat, method="ML")
+	#fit2<-gls(form2, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
+		for (p in c(0.5,seq(0,1,by=0.01))) {possibleError <- tryCatch(
+		      gls(form2, correlation=corPagel(value=p,phy=cladeData$phy), data=dat, method="ML"),
+		      error=function(e) e)
+		if(inherits(possibleError, "gls")) break		
+		if(inherits(possibleError, "error")) next}
+		fit2<-possibleError
+
+		sum2<-summary(fit2)
+
+	for(k in 1:10){
+	multiPGLS_Per[k]<-round(sum2$tTable[k],digits=6)
+	}
+	multiPGLS_Per[11]<-round(sum2$modelStruct[[1]][1],digits=6)
+	multiPGLS_Per[12]<-round(sum2$tTable[16], digits=6)
+	multiPGLS_Per[13]<-round(sum2$tTable[17], digits=6)
+	multiPGLS_Per[14]<-round(sum2$tTable[18], digits=6)
+	multiPGLS_Per[15]<-round(sum2$tTable[19], digits=6)
+	multiPGLS_Per[16]<-round(sum2$tTable[20], digits=6)
+
+	write.table(multiPGLS_Per,paste(bbone,"_sample100_",i,"_PGLS_",corr,"_explaining-Richness_perSlice_",sliceN,"_SCALED_multiVar_Correct-rootwardWithSingle_age-DRmean-DRskew-perSamp.txt",sep=""))
+
+	} # cycles each time slice
+
+} # cycles the 100 trees
+
+
+
+# ==============
+# Visualize 
+#======================================
+# UNIVARIATE-- adding in the SIMULATIONS too.
+#======================================
+# intialize
+library(ape); library(phytools); library(picante); library(geiger); library(moments); library(nlme)
+library(plotrix)
+
+# which backbone?
+bbone<- "NDexp" #"FBD" # 
+
+# get the clade names
+sliceEvery = 5 # million years
+upTo = 70 # million years
+numSlices = upTo/sliceEvery
+allCladeSetNames<-vector("list",length=numSlices)
+for (j in 1:numSlices){
+	allCladeSetNames[[j]]<-paste(sliceEvery*j,"Ma",sep="")
 }
-#corr<-"BROWNIAN"
-corr<-"PAGEL"
+sliceTimes<-seq(-5,-70,-5)
 
-#write.table(partSlopesPGLS_All,paste(bbone,"_sample100_",i,"_PGLSmulti_",corr,"_timeSlices_ACTUAL_partSlopes123.txt",sep=""))
-#write.table(partSlopesPGLS_All_Per,paste(bbone,"_sample100_",i,"_PGLSmulti_",corr,"_timeSlices_wPercentSamp_ACTUAL_partSlopes123.txt",sep=""))
-#uniPGLS<-cbind(uniPGLS_allInts,uniPGLS_allSlopes,uniPGLS_allPs,uniPGLS_allSEs,uniPGLS_allLams)
-#write.table(uniPGLS,paste(bbone,"_sample100_",i,"_PGLS_",corr,"_timeSlices_wPercentSamp_ACTUAL_uniINTS_uniSLO_uniP.txt",sep=""))
+# set dir
+dirname="/Users/nate/Desktop/VertLife_Project/MAMMALS-phylo-analyses/12_PhyloAnalyses/cladeLevel_SLICES_explainingRichness"
+setwd(dirname)
 
-write.table(partSlopesPGLS_All,paste(bbone,"_sample100_",i,"_PGLSmulti_",corr,"_noLamCI_timeSlices_SCALED_partSlopes123.txt",sep=""))
-write.table(partSlopesPGLS_All_Per,paste(bbone,"_sample100_",i,"_PGLSmulti_",corr,"_noLamCI_timeSlices_wPercentSamp_SCALED_partSlopes123.txt",sep=""))
-uniPGLS<-cbind(uniPGLS_allInts,uniPGLS_allSlopes,uniPGLS_allPs,uniPGLS_allSEs,uniPGLS_allLams)
-write.table(uniPGLS,paste(bbone,"_sample100_",i,"_PGLS_",corr,"_noLamCI_timeSlices_wPercentSamp_SCALED_uniINTS_uniSLO_uniP.txt",sep=""))
+# ~~~~~~~~~~~~~~~~~~~
+# EMPIRICAL
+# load back in the results
+# =========================
+ntrees=100
+whichTrees<-c(100, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 1, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 2, 30, 32, 33, 34, 35, 36, 37, 38, 39, 3, 40, 41, 42, 44, 45, 46, 47, 48, 49, 4, 50, 51, 52, 53, 55, 56, 57, 58, 59, 5, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 6, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 7, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 8, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 9)
+fewerTrees<-ntrees-length(whichTrees)
+nslices=14 # analyze all 14 slices, 5 Ma to 70 Ma 
+corr="PAGEL"
 
-#write.table(partSlopesPGLS_All,paste(bbone,"_sample100_",i,"_PGLSmulti_noTREE_timeSlices_SCALED_partSlopes123.txt",sep=""))
-#write.table(partSlopesPGLS_All_Per,paste(bbone,"_sample100_",i,"_PGLSmulti_noTREE_timeSlices_wPercentSamp_SCALED_partSlopes123.txt",sep=""))
-#uniPGLS<-cbind(uniPGLS_allInts,uniPGLS_allSlopes,uniPGLS_allPs,uniPGLS_allSEs,uniPGLS_allLams)
-#write.table(uniPGLS,paste(bbone,"_sample100_",i,"_PGLS_noTREE_timeSlices_wPercentSamp_SCALED_uniINTS_uniSLO_uniP.txt",sep=""))
+exp_N<-vector("list",length=nslices)
 
-#write.table(partSlopesPGLS_All,paste(bbone,"_sample100_",i,"_PGLSmulti_noTREE_timeSlices_ACTUAL_partSlopes123.txt",sep=""))
-#write.table(partSlopesPGLS_All_Per,paste(bbone,"_sample100_",i,"_PGLSmulti_noTREE_timeSlices_wPercentSamp_ACTUAL_partSlopes123.txt",sep=""))
-#uniPGLS<-cbind(uniPGLS_allInts,uniPGLS_allSlopes,uniPGLS_allPs,uniPGLS_allSEs,uniPGLS_allLams)
-#write.table(uniPGLS,paste(bbone,"_sample100_",i,"_PGLS_noTREE_timeSlices_wPercentSamp_ACTUAL_uniINTS_uniSLO_uniP.txt",sep=""))
+for(j in 1:nslices){
+sliceN<-allCladeSetNames[[j]]
+
+	N<-vector("list",length=ntrees)
+	
+	for(i in whichTrees){
+	#for(i in 1:ntrees){
+	#uniPGLS<-read.table(file=paste(bbone,"_sample100_",i,"_PGLS_",corr,"_explaining-4varDR_perSlice_",sliceN,"_SCALED_uniVar_Correct_7preds.txt",sep=""), header=TRUE)
+	uniPGLS<-read.table(file=paste(bbone,"_sample100_",i,"_PGLS_",corr,"_explaining-Richness_perSlice_",sliceN,"_SCALED_uniVar_Correct-rootwardWithSingle_10preds.txt",sep=""), header=TRUE)
+	tree<-i
+	slice<-sliceTimes[[j]]
+	num<-j
+
+	N[[i]]<-cbind(uniPGLS[1,],slice,num,tree)
+	}
+
+exp_N[[j]]<-do.call(rbind,N)
 }
+
+respVar<-"logRichness"
+
+
+# calculate 95% CIs (and significance) for the slopes per tree & slice
+# ====================================================================
+#predictors<-colnames(exp_BDdiv[[1]])[8:14]
+predictors<-colnames(exp_N[[1]])[11:20]
+nPred<-length(predictors)
+
+RESP<-exp_N
+
+dataToPlot_allPreds_allSlices<-vector("list",length=nslices)
+
+for(j in 1:nslices){ # for each slice from 5 to 70 Ma...
+
+slice<-sliceTimes[[j]]
+uniDat<-RESP[[j]]
+
+# SEs to calc 95 CIs...
+slopesToPlot<-uniDat[,predictors]
+pvalsToPlot<-uniDat[,c(paste("p_",(1:nPred),sep=""))]
+SEsToPlot<-uniDat[,c(paste("SE_",(1:nPred),sep=""))]
+lamsToPlot<-uniDat[,c(paste("lam_",(1:nPred),sep=""))]
+
+	# The 95% CI for each estimate of each var, plotted together
+	dataToPlot_allPreds_perSlice<-vector("list",length(predictors))
+
+	for (i in 1:(ntrees-fewerTrees)){ # so for a given tree IN a slice... taking each of *nPred* vars and calc 95%CI
+	#for (i in 1:ntrees){ # so for a given tree IN a slice... taking each of *nPred* vars and calc 95%CI
+		slopes_i<-slopesToPlot[i,]
+		SEs_i<-SEsToPlot[i,]
+		pVals_i<-pvalsToPlot[i,]
+		lams_i<-lamsToPlot[i,]
+		dataToPlot_k<-vector("list",length(predictors))
+		for (k in 1:length(predictors)){
+			color<-if(pVals_i[,k] <= 0.05){ "grey" } else { "red" } 
+			lowHigh95_k<-cbind.data.frame(slopes_i[,k]-(1.96*SEs_i[,k]),slopes_i[,k],slopes_i[,k]+(1.96*SEs_i[,k]),color,predictors[k],lams_i[,k],sliceTimes[j],j,i)
+			colnames(lowHigh95_k)<-c("low","mean","high","color","xVal","lam","time","slice","tree")
+			dataToPlot_k[[k]]<-lowHigh95_k
+		} # end *nPred* loop
+		dataToPlot_allPreds_perSlice[[i]]<-do.call(rbind,dataToPlot_k)
+	} # end 100 tree loop
+	dataToPlot_allPreds_allSlices[[j]]<-do.call(rbind,dataToPlot_allPreds_perSlice)
+} # end 10 slice loop
+dataToPlot_allPreds_allSlices_allRespVars<-do.call(rbind,dataToPlot_allPreds_allSlices)
+
+
+# count the NUMBER of significant runs per time slice per variable across 100 trees
+# ==================================================================================
+dat<-dataToPlot_allPreds_allSlices_allRespVars
+		
+	numSignif_perSlice<-vector("list",length=nslices)
+	lamMean_perSlice<-vector("list",length=nslices)
+	for(j in 1:nslices){
+	slice<-dat[which(dat$slice==j),]
+
+		numSignif<-c()
+		lamMean<-c()
+		for (k in 1:length(predictors)){
+		predPerSlice<-slice[which(slice$xVal==predictors[k]),]
+		num<-length(predPerSlice[which(predPerSlice$color=="grey"),][,1])
+		numSignif[k]<-round((num/(ntrees-fewerTrees))*ntrees,0)
+		
+		lamMean[k]<-round(mean(predPerSlice[,"lam"]),2)
+		}
+		numSignif_perSlice[[j]]<-c(numSignif,sliceTimes[j],j)
+		lamMean_perSlice[[j]]<-c(lamMean,sliceTimes[j],j)
+	}
+	RES1<-do.call(rbind,numSignif_perSlice)
+	colnames(RES1)<-c(predictors,"time","slice")
+	rownames(RES1)<-rep(respVar,nslices)
+	
+	RES2<-do.call(rbind,lamMean_perSlice)
+	colnames(RES2)<-c(predictors,"time","slice")
+	rownames(RES2)<-rep(respVar,nslices)
+
+numSignif_perSlice_ALL<-RES1
+lamMean_perSlice_ALL<-RES2
+
+
+# **SIMULATIONS**
+# ~~~~~~~~~~~~~~~~
+# load back in the results
+# =========================
+# set NEW dir
+dirname="/Users/nate/Desktop/VertLife_Project/MAMMALS-phylo-analyses/12_PhyloAnalyses/cladeLevel_SLICES_explainingRichness/_res_SIMS_explainingRichness"
+setwd(dirname)
+
+ntrees=100
+	# for UNI - mamPhyE -- 72 trees
+	whichTrees<-c(100,10,11,12,13,18,1,20,21,22,23,26,27,28,29,2,30,32,33,35,36,38,39,3,40,41,43,44,45,46,47,48,4,50,51,52,53,54,55,56,57,58,5,60,61,63,64,68,6,70,71,72,73,75,76,77,79,7,80,81,82,83,84,86,8,90,91,93,95,96,99,9)
+	# for UNI - lowE_0p2 -- 50? trees
+	# for UNI - highE_0p8 -- 0 trees...
+
+#whichTreesAll<-list(whichTrees_1,whichTrees_2,whichTrees_3)
+
+sims<-c("mamPhyE","lowE_0p2","highE_0p8")
+
+dataToPlot_allPreds_allSlices_allRespVars_SIMS<-vector("list",length(sims))
+numSignif_perSlice_ALL_SIMS<-vector("list",length(sims))
+lamMean_perSlice_ALL_SIMS<-vector("list",length(sims))
+
+z=1
+#for(z in 1:length(sims)){
+
+#whichTrees<-whichTreesAll[[z]]
+fewerTrees<-ntrees-length(whichTrees)
+nslices=14 # analyze all 14 slices, 5 Ma to 70 Ma 
+corr="PAGEL"
+
+exp_N_SIM<-vector("list",length=nslices)
+
+for(j in 1:nslices){
+sliceN<-allCladeSetNames[[j]]
+
+	N<-vector("list",length(whichTrees))
+	
+	for(i in whichTrees){
+	#for(i in 1:ntrees){
+	uniPGLS<-read.table(file=paste("MamPhy_SIMS_",sims[z],"_",bbone,"_sample100_",i,"_PGLS_",corr,"_explaining-Richness_perSlice_",sliceN,"_SCALED_uniVar_Correct-rootwardWithSingle_9preds.txt",sep=""), header=TRUE)
+	tree<-i
+	slice<-sliceTimes[[j]]
+	num<-j
+
+	N[[i]]<-cbind(uniPGLS[1,],slice,num,tree)
+	}
+
+exp_N_SIM[[j]]<-do.call(rbind,N)
+}
+
+respVar<-"logRichness"
+
+# calculate 95% CIs (and significance) for the slopes per tree & slice
+# ====================================================================
+predictors<-colnames(exp_N_SIM[[1]])[10:18]
+nPred<-length(predictors)
+
+RESP<-exp_N_SIM
+
+dataToPlot_allPreds_allSlices<-vector("list",length=nslices)
+
+for(j in 1:nslices){ # for each slice from 5 to 70 Ma...
+
+slice<-sliceTimes[[j]]
+uniDat<-RESP[[j]]
+
+# SEs to calc 95 CIs...
+slopesToPlot<-uniDat[,predictors]
+pvalsToPlot<-uniDat[,c(paste("p_",(1:nPred),sep=""))]
+SEsToPlot<-uniDat[,c(paste("SE_",(1:nPred),sep=""))]
+lamsToPlot<-uniDat[,c(paste("lam_",(1:nPred),sep=""))]
+
+	# The 95% CI for each estimate of each var, plotted together
+	dataToPlot_allPreds_perSlice<-vector("list",length(predictors))
+
+	for (i in 1:(ntrees-fewerTrees)){ # so for a given tree IN a slice... taking each of *nPred* vars and calc 95%CI
+	#for (i in 1:ntrees){ # so for a given tree IN a slice... taking each of *nPred* vars and calc 95%CI
+		slopes_i<-slopesToPlot[i,]
+		SEs_i<-SEsToPlot[i,]
+		pVals_i<-pvalsToPlot[i,]
+		lams_i<-lamsToPlot[i,]
+		dataToPlot_k<-vector("list",length(predictors))
+		for (k in 1:length(predictors)){
+			color<-if(pVals_i[,k] <= 0.05){ "grey" } else { "red" } 
+			lowHigh95_k<-cbind.data.frame(slopes_i[,k]-(1.96*SEs_i[,k]),slopes_i[,k],slopes_i[,k]+(1.96*SEs_i[,k]),color,predictors[k],lams_i[,k],sliceTimes[j],j,i)
+			colnames(lowHigh95_k)<-c("low","mean","high","color","xVal","lam","time","slice","tree")
+			dataToPlot_k[[k]]<-lowHigh95_k
+		} # end *nPred* loop
+		dataToPlot_allPreds_perSlice[[i]]<-do.call(rbind,dataToPlot_k)
+	} # end 100 tree loop
+	dataToPlot_allPreds_allSlices[[j]]<-do.call(rbind,dataToPlot_allPreds_perSlice)
+} # end 10 slice loop
+dataToPlot_allPreds_allSlices_allRespVars_SIMS[[z]]<-do.call(rbind,dataToPlot_allPreds_allSlices)
+
+
+# count the NUMBER of significant runs per time slice per variable across 100 trees
+# ==================================================================================
+dat<-dataToPlot_allPreds_allSlices_allRespVars_SIMS[[z]]
+		
+	numSignif_perSlice<-vector("list",length=nslices)
+	lamMean_perSlice<-vector("list",length=nslices)
+	for(j in 1:nslices){
+	slice<-dat[which(dat$slice==j),]
+
+		numSignif<-c()
+		lamMean<-c()
+		for (k in 1:length(predictors)){
+		predPerSlice<-slice[which(slice$xVal==predictors[k]),]
+		num<-length(predPerSlice[which(predPerSlice$color=="grey"),][,1])
+		numSignif[k]<-round((num/(ntrees-fewerTrees))*ntrees,0)
+		
+		lamMean[k]<-round(mean(predPerSlice[,"lam"]),2)
+		}
+		numSignif_perSlice[[j]]<-c(numSignif,sliceTimes[j],j)
+		lamMean_perSlice[[j]]<-c(lamMean,sliceTimes[j],j)
+	}
+	RES1<-do.call(rbind,numSignif_perSlice)
+	colnames(RES1)<-c(predictors,"time","slice")
+	rownames(RES1)<-rep(respVar,nslices)
+	
+	RES2<-do.call(rbind,lamMean_perSlice)
+	colnames(RES2)<-c(predictors,"time","slice")
+	rownames(RES2)<-rep(respVar,nslices)
+
+numSignif_perSlice_ALL_SIMS[[z]]<-RES1
+lamMean_perSlice_ALL_SIMS[[z]]<-RES2
+
+
+#} # end 3 sim loop
+
+
+
+# UNIVARATE, explainingRichness
+# **BOTH-- EMPIRICAL + SIMULATIONS -- PLOTTING**
+# PLOT the 95% CIs per slice for each respVar by predictor comparison across 100 trees
+# ====================================================================================
+corr="PAGEL"
+sliceN="5to70Ma"
+#predictorsORIG<-colnames(exp_N[[1]])[11:20]
+predictors<-c("MRCA", "DR_harm", "DR_skew", "DR_cv", "percentSamp", "PB_Div","BD_Div", "BD_Turn", "BD_Lam", "BD_Mu")
+nPred<-length(predictors)
+respVar<-"logRichness"
+nResp<-length(respVar)
+nTotal<-nPred*nResp
+sliceTimes<-seq(-5,-70,-5)[1:14]
+
+vertLwd<-0.5
+lwdCI<-1.5
+horizLine<-0
+empirPointCol<-grey(0.3,alpha=0.5)
+redCol<-rgb(1,0,0,alpha=0.3)
+yLims1<-c(-1.5,2.5)
+
+simAlpha<-0.05
+Col<-"darkgoldenrod2"
+Col1<-rgb((col2rgb(Col)/255)[1],(col2rgb(Col)/255)[2],(col2rgb(Col)/255)[3],alpha=simAlpha)
+Col<-"deepskyblue2"
+Col2<-rgb((col2rgb(Col)/255)[1],(col2rgb(Col)/255)[2],(col2rgb(Col)/255)[3],alpha=simAlpha)
+Col<-"darkorchid3"
+Col3<-rgb((col2rgb(Col)/255)[1],(col2rgb(Col)/255)[2],(col2rgb(Col)/255)[3],alpha=simAlpha)
+ColorsSIM<-c(Col1,Col2,Col3)
+ColorsSIM_full<-c("darkgoldenrod2","deepskyblue2","darkorchid3")
+
+
+#pdf(file=paste("cladeLevel",bbone,"_PGLSuni_",corr,"_explaining-Richness_timeSlices_",sliceN,"_95pCI_rootwardWithSingle_10vars.pdf",sep=""),onefile=TRUE, width=(8*nResp),height=(2*nPred))
+pdf(file=paste("cladeLevel",bbone,"_PGLSuni_",corr,"_explaining-Richness_timeSlices_",sliceN,"_95pCI_rootwardWithSingle_10vars_WITH-1SIM.pdf",sep=""),onefile=TRUE, width=(8*nResp),height=(2*nPred))
+
+#quartz(width=(8*nResp),height=(2*nPred))
+layout(matrix(c(1:nTotal), nPred/2, nResp*2, byrow = TRUE), widths=rep(4,nTotal), heights=rep(3,nTotal))
+par(oma = c(5,4,5,3) + 0.1, mar = c(4,1,1,1) + 0.1)
+
+
+
+uniDat_ALL<-dataToPlot_allPreds_allSlices_allRespVars
+signifDat_ALL<-numSignif_perSlice_ALL
+
+	for(k in 1:length(predictors)){
+	uniDat<-uniDat_ALL[which(uniDat_ALL$xVal==predictors[k]),]
+
+	# plot base (no points)
+	plot(formula(mean ~ time), data=uniDat, ylim=yLims1, ylab="",xlab="", yaxt="n",xaxt="n",type="n")
+	axis(side=2,at=NULL,labels=TRUE)
+	axis(side=1,at=NULL,labels=TRUE)
+
+	# add guide lines
+	for(j in 1:nslices){
+		abline(v=-5*j,lty=2, lwd=vertLwd, col=grey(0.6, alpha=0.5))
+	}
+		abline(h=horizLine,lty=1, lwd=1, col=grey(0.6, alpha=0.5))
+
+	# plot data
+	dat_UNsignif<-uniDat[which(uniDat$color=="red"),]
+	if(length(dat_UNsignif[,1])>0){
+	plotCI(x=dat_UNsignif$time, add=TRUE,y=dat_UNsignif$mean,ui=dat_UNsignif$high,li=dat_UNsignif$low, cex=1.3,sfrac=0, err="y", lwd=lwdCI,col=redCol,scol=redCol,pch=1,font.lab=2,cex.axis=1.1,cex.lab=1.1)
+	}
+	dat_signif<-uniDat[which(uniDat$color=="grey"),]
+	plotCI(x=dat_signif$time, add=TRUE,y=dat_signif$mean,ui=dat_signif$high,li=dat_signif$low, cex=1.3,sfrac=0, err="y", lwd=lwdCI,col=empirPointCol,scol=empirPointCol,pch=1,font.lab=2,cex.axis=1.1,cex.lab=1.1)
+
+	mtext(side=3,text=paste(respVar," ~ "),font=2,adj=0,line=1)
+	mtext(side=3,text=predictors[k],font=2,adj=0)
+	
+	# add numSignif data
+	sigDat<-signifDat_ALL[,c(predictors[k],"time")]
+	text(x=sigDat[,2], y = yLims1[2], cex=0.9,font=2, labels = sigDat[,1], col="dark grey")
+
+	} # end *nPred* loop
+
+dev.off()
+
+
+
+
+
+
+
+
+pdf(file=paste("cladeLevel",bbone,"_PGLSmulti_",corr,"_explaining-Richness_timeSlices_",sliceN,"_95pCI_rootwardWithSingle_3vars_WITH-3-SIMS.pdf",sep=""),onefile=TRUE, width=(4*nResp),height=(4*nPred))
+#pdf(file=paste("cladeLevel",bbone,"_PGLSmulti_",corr,"_explaining-Richness_timeSlices_",sliceN,"_95pCI_rootwardWithSingle_3vars.pdf",sep=""),onefile=TRUE, width=(4*nResp),height=(4*nPred))
+#pdf(file=paste("cladeLevel",bbone,"_PGLSmulti_",corr,"_explaining-Richness_timeSlices_",sliceN,"_95pCI_rootwardWithSingle_4varsPerSamp.pdf",sep=""),onefile=TRUE, width=(4*nResp),height=(4*nPred))
+
+#quartz(width=(8*nResp),height=(2*nPred))
+layout(matrix(c(1:nTotal), nPred, nResp, byrow = TRUE), widths=rep(4,nTotal), heights=rep(3,nTotal))
+par(oma = c(5,4,5,3) + 0.1, mar = c(4,1,1,1) + 0.1)
+
+
+for(k in 1:length(predictors)){
+	empiricalDat<-dataToPlot_allPreds_allSlices_allRespVars[which(dataToPlot_allPreds_allSlices_allRespVars$xVal==predictors[k]),]
+
+	# plot base (no points)
+	plot(formula(mean ~ time), data=empiricalDat, ylim=yLims1, ylab="",xlab="", yaxt="n",xaxt="n",type="n")
+	axis(side=2,at=NULL,labels=TRUE)
+	axis(side=1,at=NULL,labels=TRUE)
+	if(k==1){ mtext(side=3, line=2, text="MULTIVARIATE")}
+
+	# add guide lines
+	for(j in 1:nslices){
+		abline(v=-5*j,lty=2, lwd=vertLwd, col=grey(0.6, alpha=0.5))
+	}
+		abline(h=horizLine,lty=1, lwd=1, col=grey(0.6, alpha=0.5))
+
+# plot EMPIRICAL data
+	dat_UNsignif<-empiricalDat[which(empiricalDat$color=="red"),]
+	if(length(dat_UNsignif[,1])>0){
+	plotCI(x=dat_UNsignif$time, add=TRUE,y=dat_UNsignif$mean,ui=dat_UNsignif$high,li=dat_UNsignif$low, cex=1.3,sfrac=0, err="y", lwd=lwdCI,col=redCol,scol=redCol,pch=1,font.lab=2,cex.axis=1.1,cex.lab=1.1)
+	}
+	dat_signif<-empiricalDat[which(empiricalDat$color=="grey"),]
+	plotCI(x=dat_signif$time, add=TRUE,y=dat_signif$mean,ui=dat_signif$high,li=dat_signif$low, cex=1.3,sfrac=0, err="y", lwd=lwdCI,col=empirPointCol,scol=empirPointCol,pch=1,font.lab=2,cex.axis=1.1,cex.lab=1.1)
+
+	mtext(side=3,text=paste(respVar," ~ "),font=2,adj=0,line=1)
+	mtext(side=3,text=predictors[k],font=2,adj=0)
+	
+	# add numSignif data
+	sigDat<-numSignif_perSlice_ALL[,c(predictors[k],"time")]
+	text(x=sigDat[,2], y = yLims1[2], cex=0.9,font=2, labels = sigDat[,1], col="dark grey")
+
+	# add LAMBDA data
+	lamDat<-lamMean_perSlice_ALL[,c(predictors[k],"time")]
+	text(x=lamDat[,2], y = yLims1[1], cex=0.6,font=2, labels = lamDat[,1], col="dark grey")
+
+
+# plot SIMULATED data
+	for(z in 1:length(sims)){
+
+	simDat<-dataToPlot_allPreds_allSlices_allRespVars_SIMS[[z]]
+	simColor<-ColorsSIM[[z]]
+	simulatedDat<-simDat[which(simDat$xVal==predictors[k]),]
+
+	dat_UNsignif<-simulatedDat[which(simulatedDat$color=="red"),]
+	if(length(dat_UNsignif[,1])>0){
+	plotCI(x=dat_UNsignif$time, add=TRUE,y=dat_UNsignif$mean,ui=dat_UNsignif$high,li=dat_UNsignif$low, cex=1.3,sfrac=0, err="y", lwd=lwdCI,col=redCol,scol=redCol,pch=1,font.lab=2,cex.axis=1.1,cex.lab=1.1)
+	}
+	dat_signif<-simulatedDat[which(simulatedDat$color=="grey"),]
+	plotCI(x=dat_signif$time, add=TRUE,y=dat_signif$mean,ui=dat_signif$high,li=dat_signif$low, cex=1.3,sfrac=0, err="y", lwd=lwdCI,col=simColor,scol=simColor,pch=1,font.lab=2,cex.axis=1.1,cex.lab=1.1)
+
+	} # end 3 sim loop
+
+
+} # end *nPred* loop
+
+
+dev.off()
+
+
+
+# ==============
+# Visualize 
+#======================================
+# MULTIVARIATE-- adding in the SIMULATIONS too.
+#======================================
+# intialize
+library(ape); library(phytools); library(picante); library(geiger); library(moments); library(nlme)
+library(plotrix)
+
+# which backbone?
+bbone<- "NDexp" #"FBD" # 
+
+# get the clade names
+sliceEvery = 5 # million years
+upTo = 70 # million years
+numSlices = upTo/sliceEvery
+allCladeSetNames<-vector("list",length=numSlices)
+for (j in 1:numSlices){
+	allCladeSetNames[[j]]<-paste(sliceEvery*j,"Ma",sep="")
+}
+sliceTimes<-seq(-5,-70,-5)
+
+# set dir
+dirname="/Users/nate/Desktop/VertLife_Project/MAMMALS-phylo-analyses/12_PhyloAnalyses/cladeLevel_SLICES_explainingRichness"
+setwd(dirname)
+
+
+# **EMPIRICAL**
+# ~~~~~~~~~~~~~~~~
+# load back in the results
+# =========================
+ntrees=100
+	# for MULTI - 3 var-- 97 trees
+	whichTrees<-c(100, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 1, 21, 22, 23, 24, 25, 27, 28, 29, 2, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 3, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 4, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 5, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 6, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 7, 80, 81, 82, 83, 84, 85, 86, 88, 89, 8, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 9)	
+	# for MULTI - 4 var (3 + perSamp)-- 98 trees
+#	whichTrees<-c(100, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 1, 20, 21, 22, 23, 24, 25, 27, 28, 29, 2, 30, 31, 32, 33, 34, 35, 37, 38, 39, 3, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 4, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 5, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 6, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 7, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 8, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 9)
+	
+fewerTrees<-ntrees-length(whichTrees)
+nslices=14 # analyze all 14 slices, 5 Ma to 70 Ma 
+corr="PAGEL"
+
+exp_N<-vector("list",length=nslices)
+
+for(j in 1:nslices){
+sliceN<-allCladeSetNames[[j]]
+
+	N<-vector("list",length(whichTrees))
+	
+	for(i in whichTrees){
+	#for(i in 1:ntrees){
+	multiPGLS<-read.table(file=paste(bbone,"_sample100_",i,"_PGLS_",corr,"_explaining-Richness_perSlice_",sliceN,"_SCALED_multiVar_Correct-rootwardWithSingle_age-DRmean-DRskew.txt",sep=""), header=TRUE)
+#	multiPGLS<-read.table(file=paste(bbone,"_sample100_",i,"_PGLS_",corr,"_explaining-Richness_perSlice_",sliceN,"_SCALED_multiVar_Correct-rootwardWithSingle_age-DRmean-DRskew-perSamp.txt",sep=""), header=TRUE)
+	tree<-i
+	slice<-sliceTimes[[j]]
+	num<-j
+
+	N[[i]]<-cbind(multiPGLS[1,],slice,num,tree)
+	}
+
+exp_N[[j]]<-do.call(rbind,N)
+}
+
+respVar<-"logRichness"
+
+
+# calculate 95% CIs (and significance) for the slopes per tree & slice
+# ====================================================================
+predictors<-colnames(exp_N[[1]])[2:4]
+#predictors<-colnames(exp_N[[1]])[2:5]
+nPred<-length(predictors)
+
+RESP<-exp_N
+
+dataToPlot_allPreds_allSlices<-vector("list",length=nslices)
+
+for(j in 1:nslices){ # for each slice from 5 to 50 Ma...
+
+slice<-sliceTimes[[j]]
+uniDat<-RESP[[j]]
+
+# SEs to calc 95 CIs...
+slopesToPlot<-uniDat[,predictors]
+pvalsToPlot<-uniDat[,c(paste("Pval",(2:(nPred+1)),sep=""))]
+SEsToPlot<-uniDat[,c(paste("SE",(2:(nPred+1)),sep=""))]
+lamsToPlot<-uniDat[,"lam"]
+
+	# The 95% CI for each estimate of each var, plotted together
+	dataToPlot_allPreds_perSlice<-vector("list",length(predictors))
+
+	for (i in 1:(ntrees-fewerTrees)){ # so for a given tree IN a slice... taking each of *nPred* vars and calc 95%CI
+	#for (i in 1:ntrees){ # so for a given tree IN a slice... taking each of *nPred* vars and calc 95%CI
+		slopes_i<-slopesToPlot[i,]
+		SEs_i<-SEsToPlot[i,]
+		pVals_i<-pvalsToPlot[i,]
+		lams_i<-lamsToPlot[i]
+		dataToPlot_k<-vector("list",length(predictors))
+		for (k in 1:length(predictors)){
+			color<-if(pVals_i[,k] <= 0.05){ "grey" } else { "red" } 
+			lowHigh95_k<-cbind.data.frame(slopes_i[,k]-(1.96*SEs_i[,k]),slopes_i[,k],slopes_i[,k]+(1.96*SEs_i[,k]),color,predictors[k],lams_i,sliceTimes[j],j,i)
+			colnames(lowHigh95_k)<-c("low","mean","high","color","xVal","lam","time","slice","tree")
+			dataToPlot_k[[k]]<-lowHigh95_k
+		} # end *nPred* loop
+		dataToPlot_allPreds_perSlice[[i]]<-do.call(rbind,dataToPlot_k)
+	} # end 100 tree loop
+	dataToPlot_allPreds_allSlices[[j]]<-do.call(rbind,dataToPlot_allPreds_perSlice)
+} # end 10 slice loop
+dataToPlot_allPreds_allSlices_allRespVars<-do.call(rbind,dataToPlot_allPreds_allSlices)
+
+
+# count the NUMBER of significant runs per time slice per variable across 100 trees
+# ==================================================================================
+dat<-dataToPlot_allPreds_allSlices_allRespVars
+		
+	numSignif_perSlice<-vector("list",length=nslices)
+	lamMean_perSlice<-vector("list",length=nslices)
+	for(j in 1:nslices){
+	slice<-dat[which(dat$slice==j),]
+
+		numSignif<-c()
+		lamMean<-c()
+		for (k in 1:length(predictors)){
+		predPerSlice<-slice[which(slice$xVal==predictors[k]),]
+		num<-length(predPerSlice[which(predPerSlice$color=="grey"),][,1])
+		numSignif[k]<-round((num/(ntrees-fewerTrees))*ntrees,0)
+		
+		lamMean[k]<-round(mean(predPerSlice[,"lam"]),2)
+		}
+		numSignif_perSlice[[j]]<-c(numSignif,sliceTimes[j],j)
+		lamMean_perSlice[[j]]<-c(lamMean,sliceTimes[j],j)
+	}
+	RES1<-do.call(rbind,numSignif_perSlice)
+	colnames(RES1)<-c(predictors,"time","slice")
+	rownames(RES1)<-rep(respVar,nslices)
+	
+	RES2<-do.call(rbind,lamMean_perSlice)
+	colnames(RES2)<-c(predictors,"time","slice")
+	rownames(RES2)<-rep(respVar,nslices)
+
+numSignif_perSlice_ALL<-RES1
+lamMean_perSlice_ALL<-RES2
+
+
+
+# **SIMULATIONS**
+# ~~~~~~~~~~~~~~~~
+# load back in the results
+# =========================
+# set NEW dir
+dirname="/Users/nate/Desktop/VertLife_Project/MAMMALS-phylo-analyses/12_PhyloAnalyses/cladeLevel_SLICES_explainingRichness/_res_SIMS_explainingRichness"
+setwd(dirname)
+
+ntrees=100
+	# for MULTI - mamPhyE -- 97 trees
+	whichTrees_1<-c(100,10,11,12,13,15,16,17,18,19,1,20,21,22,23,24,25,26,27,28,29,2,30,31,32,33,34,35,36,37,38,39,3,40,41,42,43,44,45,46,47,48,49,4,50,51,52,53,54,55,56,57,58,59,5,60,61,62,63,64,65,66,67,69,6,70,71,72,73,74,75,76,77,78,79,7,80,81,82,83,84,85,86,87,88,89,8,90,92,93,94,95,96,97,98,99,9)
+	# for MULTI - lowE_0p2 -- 97 trees
+	whichTrees_2<-c(100,10,11,12,13,15,16,17,18,19,1,20,21,22,23,24,25,26,27,28,2,30,31,32,33,34,35,36,38,39,3,40,41,42,43,44,45,46,47,48,49,4,51,52,53,54,55,56,57,58,59,5,60,61,63,64,65,66,67,69,6,70,71,72,73,74,75,76,77,78,79,7,80,81,82,83,84,85,86,87,88,89,8,90,92,93,94,95,96,97,98,99,9)
+	# for MULTI - highE_0p8 -- 97 trees
+	whichTrees_3<-c(100,10,11,12,13,15,16,17,18,19,1,20,22,23,24,25,26,27,28,30,31,32,33,34,35,36,38,39,3,40,41,42,43,44,45,46,48,49,4,51,52,53,54,55,57,58,59,5,60,61,63,64,65,66,67,69,6,70,71,72,73,74,75,77,78,79,7,80,81,82,83,84,85,86,87,88,89,92,93,94,95,96,97,98,99,9)
+
+whichTreesAll<-list(whichTrees_1,whichTrees_2,whichTrees_3)
+
+sims<-c("mamPhyE","lowE_0p2","highE_0p8")
+
+dataToPlot_allPreds_allSlices_allRespVars_SIMS<-vector("list",length(sims))
+numSignif_perSlice_ALL_SIMS<-vector("list",length(sims))
+
+for(z in 1:length(sims)){
+
+whichTrees<-whichTreesAll[[z]]
+fewerTrees<-ntrees-length(whichTrees)
+nslices=14 # analyze all 14 slices, 5 Ma to 70 Ma 
+corr="PAGEL"
+
+exp_N_SIM<-vector("list",length=nslices)
+
+for(j in 1:nslices){
+sliceN<-allCladeSetNames[[j]]
+
+	N<-vector("list",length(whichTrees))
+	
+	for(i in whichTrees){
+	#for(i in 1:ntrees){
+	multiPGLS<-read.table(file=paste("MamPhy_SIMS_",sims[z],"_",bbone,"_sample100_",i,"_PGLS_",corr,"_explaining-Richness_perSlice_",sliceN,"_SCALED_multiVar_Correct-rootwardWithSingle_age-DRmean-DRskew.txt",sep=""), header=TRUE)
+	tree<-i
+	slice<-sliceTimes[[j]]
+	num<-j
+
+	N[[i]]<-cbind(multiPGLS[1,],slice,num,tree)
+	}
+
+exp_N_SIM[[j]]<-do.call(rbind,N)
+}
+
+respVar<-"logRichness"
+
+# calculate 95% CIs (and significance) for the slopes per tree & slice
+# ====================================================================
+predictors<-colnames(exp_N_SIM[[1]])[2:4]
+nPred<-length(predictors)
+
+RESP<-exp_N_SIM
+
+dataToPlot_allPreds_allSlices<-vector("list",length=nslices)
+
+for(j in 1:nslices){ # for each slice from 5 to 50 Ma...
+
+slice<-sliceTimes[[j]]
+uniDat<-RESP[[j]]
+
+# SEs to calc 95 CIs...
+slopesToPlot<-uniDat[,predictors]
+pvalsToPlot<-uniDat[,c(paste("Pval",(2:(nPred+1)),sep=""))]
+SEsToPlot<-uniDat[,c(paste("SE",(2:(nPred+1)),sep=""))]
+
+	# The 95% CI for each estimate of each var, plotted together
+	dataToPlot_allPreds_perSlice<-vector("list",length(predictors))
+
+	for (i in 1:(ntrees-fewerTrees)){ # so for a given tree IN a slice... taking each of *nPred* vars and calc 95%CI
+	#for (i in 1:ntrees){ # so for a given tree IN a slice... taking each of *nPred* vars and calc 95%CI
+		slopes_i<-slopesToPlot[i,]
+		SEs_i<-SEsToPlot[i,]
+		pVals_i<-pvalsToPlot[i,]
+		dataToPlot_k<-vector("list",length(predictors))
+		for (k in 1:length(predictors)){
+			color<-if(pVals_i[,k] <= 0.05){ "grey" } else { "red" } 
+			lowHigh95_k<-cbind.data.frame(slopes_i[,k]-(1.96*SEs_i[,k]),slopes_i[,k],slopes_i[,k]+(1.96*SEs_i[,k]),color,predictors[k],sliceTimes[j],j,i)
+			colnames(lowHigh95_k)<-c("low","mean","high","color","xVal","time","slice","tree")
+			dataToPlot_k[[k]]<-lowHigh95_k
+		} # end *nPred* loop
+		dataToPlot_allPreds_perSlice[[i]]<-do.call(rbind,dataToPlot_k)
+	} # end 100 tree loop
+	dataToPlot_allPreds_allSlices[[j]]<-do.call(rbind,dataToPlot_allPreds_perSlice)
+} # end 10 slice loop
+dataToPlot_allPreds_allSlices_allRespVars_SIMS[[z]]<-do.call(rbind,dataToPlot_allPreds_allSlices)
+
+
+# count the NUMBER of significant runs per time slice per variable across 100 trees
+# ==================================================================================
+dat<-dataToPlot_allPreds_allSlices_allRespVars_SIMS[[z]]
+	
+	numSignif_perSlice<-vector("list",length=nslices)
+	for(j in 1:nslices){
+	slice<-dat[which(dat$slice==j),]
+
+		numSignif<-c()
+		for (k in 1:length(predictors)){
+		predPerSlice<-slice[which(slice$xVal==predictors[k]),]
+		num<-length(predPerSlice[which(predPerSlice$color=="grey"),][,1])
+		numSignif[k]<-round((num/(ntrees-fewerTrees))*ntrees,0)
+		}
+		numSignif_perSlice[[j]]<-c(numSignif,sliceTimes[j],j)
+	}
+	RES<-do.call(rbind,numSignif_perSlice)
+	colnames(RES)<-c(predictors,"time","slice")
+	rownames(RES)<-rep(respVar,nslices)
+numSignif_perSlice_ALL_SIMS[[z]]<-RES
+
+} # end 3 sim loop
+
+
+
+# MULTIVARIATE
+# **BOTH-- EMPIRICAL + SIMULATIONS -- PLOTTING**
+# PLOT the 95% CIs per slice for each respVar by predictor comparison across 100 trees
+# ====================================================================================
+corr="PAGEL"
+sliceN="5to70Ma"
+#predictorsORIG<-colnames(exp_N[[1]])[11:20]
+predictors<-c("MRCA", "DR_harm", "DR_skew")
+#predictors<-c("MRCA", "DR_harm", "DR_skew", "percentSamp")
+nPred<-length(predictors)
+respVar<-"logRichness"
+nResp<-length(respVar)
+nTotal<-nPred*nResp
+sliceTimes<-seq(-5,-70,-5)[1:14]
+
+vertLwd<-0.5
+lwdCI<-1.5
+horizLine<-0
+empirPointCol<-grey(0.3,alpha=0.5)
+redCol<-rgb(1,0,0,alpha=0.3)
+yLims1<-c(-1.5,2.5)
+
+simAlpha<-0.05
+Col<-"darkgoldenrod2"
+Col1<-rgb((col2rgb(Col)/255)[1],(col2rgb(Col)/255)[2],(col2rgb(Col)/255)[3],alpha=simAlpha)
+Col<-"deepskyblue2"
+Col2<-rgb((col2rgb(Col)/255)[1],(col2rgb(Col)/255)[2],(col2rgb(Col)/255)[3],alpha=simAlpha)
+Col<-"darkorchid3"
+Col3<-rgb((col2rgb(Col)/255)[1],(col2rgb(Col)/255)[2],(col2rgb(Col)/255)[3],alpha=simAlpha)
+ColorsSIM<-c(Col1,Col2,Col3)
+ColorsSIM_full<-c("darkgoldenrod2","deepskyblue2","darkorchid3")
+
+
+pdf(file=paste("cladeLevel",bbone,"_PGLSmulti_",corr,"_explaining-Richness_timeSlices_",sliceN,"_95pCI_rootwardWithSingle_3vars_WITH-3-SIMS.pdf",sep=""),onefile=TRUE, width=(4*nResp),height=(4*nPred))
+#pdf(file=paste("cladeLevel",bbone,"_PGLSmulti_",corr,"_explaining-Richness_timeSlices_",sliceN,"_95pCI_rootwardWithSingle_3vars.pdf",sep=""),onefile=TRUE, width=(4*nResp),height=(4*nPred))
+#pdf(file=paste("cladeLevel",bbone,"_PGLSmulti_",corr,"_explaining-Richness_timeSlices_",sliceN,"_95pCI_rootwardWithSingle_4varsPerSamp.pdf",sep=""),onefile=TRUE, width=(4*nResp),height=(4*nPred))
+
+#quartz(width=(8*nResp),height=(2*nPred))
+layout(matrix(c(1:nTotal), nPred, nResp, byrow = TRUE), widths=rep(4,nTotal), heights=rep(3,nTotal))
+par(oma = c(5,4,5,3) + 0.1, mar = c(4,1,1,1) + 0.1)
+
+
+for(k in 1:length(predictors)){
+	empiricalDat<-dataToPlot_allPreds_allSlices_allRespVars[which(dataToPlot_allPreds_allSlices_allRespVars$xVal==predictors[k]),]
+
+	# plot base (no points)
+	plot(formula(mean ~ time), data=empiricalDat, ylim=yLims1, ylab="",xlab="", yaxt="n",xaxt="n",type="n")
+	axis(side=2,at=NULL,labels=TRUE)
+	axis(side=1,at=NULL,labels=TRUE)
+	if(k==1){ mtext(side=3, line=2, text="MULTIVARIATE")}
+
+	# add guide lines
+	for(j in 1:nslices){
+		abline(v=-5*j,lty=2, lwd=vertLwd, col=grey(0.6, alpha=0.5))
+	}
+		abline(h=horizLine,lty=1, lwd=1, col=grey(0.6, alpha=0.5))
+
+# plot EMPIRICAL data
+	dat_UNsignif<-empiricalDat[which(empiricalDat$color=="red"),]
+	if(length(dat_UNsignif[,1])>0){
+	plotCI(x=dat_UNsignif$time, add=TRUE,y=dat_UNsignif$mean,ui=dat_UNsignif$high,li=dat_UNsignif$low, cex=1.3,sfrac=0, err="y", lwd=lwdCI,col=redCol,scol=redCol,pch=1,font.lab=2,cex.axis=1.1,cex.lab=1.1)
+	}
+	dat_signif<-empiricalDat[which(empiricalDat$color=="grey"),]
+	plotCI(x=dat_signif$time, add=TRUE,y=dat_signif$mean,ui=dat_signif$high,li=dat_signif$low, cex=1.3,sfrac=0, err="y", lwd=lwdCI,col=empirPointCol,scol=empirPointCol,pch=1,font.lab=2,cex.axis=1.1,cex.lab=1.1)
+
+	mtext(side=3,text=paste(respVar," ~ "),font=2,adj=0,line=1)
+	mtext(side=3,text=predictors[k],font=2,adj=0)
+	
+	# add numSignif data
+	sigDat<-numSignif_perSlice_ALL[,c(predictors[k],"time")]
+	text(x=sigDat[,2], y = yLims1[2], cex=0.9,font=2, labels = sigDat[,1], col="dark grey")
+
+	# add LAMBDA data
+	lamDat<-lamMean_perSlice_ALL[,c(predictors[k],"time")]
+	text(x=lamDat[,2], y = yLims1[1], cex=0.6,font=2, labels = lamDat[,1], col="dark grey")
+
+
+# plot SIMULATED data
+	for(z in 1:length(sims)){
+
+	simDat<-dataToPlot_allPreds_allSlices_allRespVars_SIMS[[z]]
+	simColor<-ColorsSIM[[z]]
+	simulatedDat<-simDat[which(simDat$xVal==predictors[k]),]
+
+	dat_UNsignif<-simulatedDat[which(simulatedDat$color=="red"),]
+	if(length(dat_UNsignif[,1])>0){
+	plotCI(x=dat_UNsignif$time, add=TRUE,y=dat_UNsignif$mean,ui=dat_UNsignif$high,li=dat_UNsignif$low, cex=1.3,sfrac=0, err="y", lwd=lwdCI,col=redCol,scol=redCol,pch=1,font.lab=2,cex.axis=1.1,cex.lab=1.1)
+	}
+	dat_signif<-simulatedDat[which(simulatedDat$color=="grey"),]
+	plotCI(x=dat_signif$time, add=TRUE,y=dat_signif$mean,ui=dat_signif$high,li=dat_signif$low, cex=1.3,sfrac=0, err="y", lwd=lwdCI,col=simColor,scol=simColor,pch=1,font.lab=2,cex.axis=1.1,cex.lab=1.1)
+
+	} # end 3 sim loop
+
+
+} # end *nPred* loop
+
+
+dev.off()
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -754,6 +1298,91 @@ write.tree(simLoE, paste("MamPhy_SIMS_lowE_0p2_",bbone,"_tree",redos[i],".tre",s
 }
 
 
+#=======================================
+# For SIMS-- Make time slices every 5 Ma to create clades-- each of the three SIMS sets.
+#=======================================
+# Make the time slices at 5 Ma 
+###
+library(moments); library(nlme); library(ape); library(picante); library(phytools); library(geiger)
+library(foreach);library(doSNOW)
+
+cl = makeCluster(100, type = 'MPI', outfile="")
+registerDoSNOW(cl)
+
+ntrees<-100
+bbone<-"NDexp"
+#for(i in 1:ntrees){
+foreach(i=1:ntrees, .packages=c('geiger','moments', 'nlme', 'ape', 'picante', 'phytools'), .combine=cbind, .verbose=TRUE) %dopar% {
+
+sims<-c("mamPhyE","lowE_0p2","highE_0p8")
+
+lengthsALL_SIMS<-vector("list",length(sims))
+sumDat_SIMS<-vector("list",length(sims))
+for(z in 1:length(sims)){
+
+## read in 1 of 100 sumulated full trees
+simPhy<-read.tree(paste("MamPhy_SIMS_",sims[z],"_",bbone,"_tree",i,".tre",sep=""))
+
+# set up the slices
+sliceEvery = 5 # million years
+upTo = 70 # million years
+numSlices = upTo/sliceEvery
+
+root=max(node.age(simPhy)$ages)
+
+allCladeSets<-vector("list",length=numSlices)
+slicePhys<-vector("list",length=numSlices)
+allCladeSetNames<-vector("list",length=numSlices)
+for (j in 1:numSlices){
+	allCladeSetNames[[j]]<-paste(sliceEvery*j,"Ma",sep="")
+	# make tipward slice clades
+	allCladeSets[[j]]<-treeSlice(simPhy, slice=root-(sliceEvery*j), trivial=TRUE) # now keeping trivial (single tips)
+		# write clades to per-slice files
+		write.tree(allCladeSets[[j]],file=paste("MamPhy_SIMS_",sims[z],"_",bbone,"_sample100_",i,"_timeslice_cladeTrees_",(sliceEvery*j),"Ma.trees",sep=""))
+	# make rootward slice *backbones*
+	slicePhys[[j]]<-treeSlice(simPhy, slice=root-(sliceEvery*j), trivial=TRUE, orientation="rootwards") # toward root, slicePhys
+}
+
+# re-label the slicePhys with standard names
+# Note: need to match tips with nodes to re-label these properly! 
+for (j in 1:numSlices){
+	cladeSet<-allCladeSets[[j]]
+	newTipNames<-paste(i,"_",j,"_",c(1:length(cladeSet)),sep="")
+	
+	for (k in 1:length(cladeSet)){
+		cladeSp<-cladeSet[[k]]$tip.label
+		if(length(cladeSp)==1){ 
+			slicePhys[[j]]$tip.label[which(slicePhys[[j]]$tip.label==cladeSp)]<-newTipNames[k]
+		} else {
+			node <- getMRCA(simPhy, cladeSp) # find the MRCA node of those species
+			slicePhys[[j]]$tip.label[which(slicePhys[[j]]$tip.label==node)]<-newTipNames[k]
+		}
+	}
+}
+
+# write slice phys
+for(j in 1:length(slicePhys)){
+	write.tree(slicePhys[[j]], file=paste("MamPhy_SIMS_",sims[z],"_",bbone,"_tree_",i,"_CORRECT_slicePhy-5to70Ma_by5.trees",sep=""), append=TRUE)
+}
+
+# record clade sizes per slice
+allLengths_i<-vector("list",length(allCladeSets))
+for (j in 1:length(allCladeSets)){
+	lengths<-vector()
+	for(k in 1:length(allCladeSets[[j]])){
+		lengths[k]<-length(allCladeSets[[j]][[k]]$tip.label)
+	}
+allLengths_i[[j]]<-lengths
+}
+names(allLengths_i)<-allCladeSetNames 
+save(allLengths_i, file=paste("MamPhy_SIMS_",sims[z],"_",bbone,"_sample100_",i,"_timeslice_cladeRichnesses_wSingletons.Rda",sep=""))
+
+
+} # end 3 sim loop
+
+} # end 100 tree loop
+
+
 
 #===============
 # For SIMULATIONS--  Calculate per-slice, per-clade summary values 
@@ -762,87 +1391,73 @@ write.tree(simLoE, paste("MamPhy_SIMS_lowE_0p2_",bbone,"_tree",redos[i],".tre",s
 # ALL trees simulated and WRITTEN
 # want to LOAD back in, re-do the calculations
 #######
-setwd(dirname)
+
+# packages
 library(moments); library(nlme); library(ape); library(picante); library(phytools); library(geiger)
+library(foreach);library(doSNOW)
 source("DR_functions.R")
 
-library(foreach);library(doSNOW)
-#cl = makeCluster(15, type = 'SOCK', outfile="")
-cl = makeCluster(5, type = 'SOCK', outfile="")
+# open cluster for parallel processing
+cl = makeCluster(100, type = 'MPI', outfile="")
 registerDoSNOW(cl)
 
-#ntrees=100
-ntrees=5
+# start parallel loop
+ntrees<-100
+foreach(i=1:ntrees, .packages=c('geiger','moments', 'nlme', 'ape', 'picante', 'phytools'), .combine=cbind, .verbose=TRUE) %dopar% {
 
-foreach(i=1:ntrees, .packages=c('moments', 'nlme', 'ape', 'picante', 'phytools','geiger'), .combine=cbind, .verbose=TRUE) %dopar% {
-#setwd("/Users/Nate/Desktop/VertLife-Project/MAMMALS-phylo-analyses/12_PhyloAnalyses/Diversification_analyses-Condamine/_mamPhy_global_100trees/trees_1to100_brokenOut/_NDexp_nexus-and-newickTrees")
+# loop through 3 categories of simulation
+sims<-c("mamPhyE","lowE_0p2","highE_0p8")
+bbone<-"NDexp"
 
-redos<-c(4, 28, 35, 78, 93)
+for(z in 1:length(sims)){
 
-# which backbone?
-bbone<- "NDexp" #"FBD" # 
-# tree sims
-simMam<-read.tree(paste("MamPhy_SIMS_mamPhyE_",bbone,"_tree",redos[i],".tre",sep=""))
-simHiE<-read.tree(paste("MamPhy_SIMS_highE_0p8_",bbone,"_tree",redos[i],".tre",sep=""))
-simLoE<-read.tree(paste("MamPhy_SIMS_lowE_0p2_",bbone,"_tree",redos[i],".tre",sep=""))
+## read in 1 of 100 sumulated full trees
+simPhy<-read.tree(paste("MamPhy_SIMS_",sims[z],"_",bbone,"_tree",i,".tre",sep=""))
+tree1=scan(paste("MamPhy_SIMS_",sims[z],"_",bbone,"_tree",i,".tre",sep=""), what="",sep="\n",quiet=TRUE,skip=0,comment.char="#") 
 
-# CHANGING code -- the simulation name
-sims<-c("mamPhyE", "highE_0p8", "lowE_0p2")
-trees<-list(simMam,simHiE,simLoE)
 
-for(q in 1:length(sims)){
-
-# SIM TREE for DR calcs
-tree1=scan(paste("MamPhy_SIMS_",sims[q],"_",bbone,"_tree",redos[i],".tre",sep=""), what="",sep="\n",quiet=TRUE,skip=0,comment.char="#") 
-
-# SIM TREE to work on
-mamPhy<-trees[[q]]
-
-# ES and DR on per-tip basis
-#==================
+# Calculate ES and DR on per-tip basis
+# ==================
 # gives pairwise clade matrix from CAIC function
 clade_matrix = readCAIC(tree1)
+
+# calculate and write to file
 DR = 1/ES_v2(clade_matrix)
 ES = ES_v2(clade_matrix)
 res = cbind.data.frame(DR,ES)
 res1 = res[order(rownames(res)),]
-write.table(res1, file=paste("MamPhy_SIMS_",sims[q],"_",bbone,"_tree",redos[i],"_DRtips.txt",sep=""))
 
-# Make time slices to create the clades
-#=======================================
+write.table(res1, file=paste("MamPhy_SIMS_",sims[z],"_",bbone,"_sample100_",i,"_DRtips.txt",sep=""))
+res1<-read.table(file=paste("MamPhy_SIMS_",sims[z],"_",bbone,"_sample100_",i,"_DRtips.txt",sep=""))
+
+
+# load back in sliceClades (pre-calculated)
+# =========================
 sliceEvery = 5 # million years
 upTo = 70 # million years
 numSlices = upTo/sliceEvery
-rootTime<-max(node.age(mamPhy)$ages)
 
-allCladeSets<-vector("list",length=numSlices)
+root=max(node.age(simPhy)$ages)
+
 allCladeSetNames<-vector("list",length=numSlices)
+allCladeSets<-vector("list",length=numSlices)
 for (j in 1:numSlices){
-	allCladeSets[[j]]<-treeSlice(mamPhy, slice=rootTime-(sliceEvery*j), trivial=FALSE)
 	allCladeSetNames[[j]]<-paste(sliceEvery*j,"Ma",sep="")
-}
+	# re-load
+	allCladeSets[[j]]<-read.tree(file=paste("MamPhy_SIMS_",sims[z],"_",bbone,"_sample100_",i,"_timeslice_cladeTrees_",(sliceEvery*j),"Ma.trees",sep=""))
+	}
 
-# record clade sizes per slice
-lengths<-vector()
-for (j in 1:length(allCladeSets)){
-	lengths[j]<-length(allCladeSets[[j]])
-}
-names(lengths)<-allCladeSetNames 
-lengths
-write.table(lengths, file=paste("MamPhy_SIMS_",sims[q],"_",bbone,"_tree",redos[i],"_timeslice_Lengths.txt",sep=""))
 
+#===================================
 # Calculate per-SLICE, per-clade summary values 
 #===================================
+
 # get node times for tree
-btimes<-branching.times(mamPhy)
+btimes<-branching.times(simPhy)
 
 # yule function
+#ymle = function(tree){ (.subset2(tree,3)-1L)/sum(.subset2(tree,2)) } # this take the # of number of nodes in a tree (minus 1) / sum of branch lengths.
 ymle = function(tree){ (.subset2(tree,2)-1L)/sum(.subset2(tree,4)) } # this take the # of number of nodes in a tree (minus 1) / sum of branch lengths.
-
-#cladeSetz<-c()
-#for(j in 1:length(allCladeSets[[1]])){
-#	cladeSetz[j]<-length(allCladeSets[[1]][[j]]$tip.label)
-#	}
 
 # do per-slice, per-clade calcs
 for(j in 1:length(allCladeSets)){
@@ -850,25 +1465,35 @@ cladeSet<-allCladeSets[[j]]
 
 	# empty data frames to fill
 	DR_harm<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
+	DR_cv<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	DR_skew<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
+	DR_kurt<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
+	#percentSamp<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	richness<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	MRCA<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	PB_Div<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD_Lam<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD_Mu<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD_Div<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
+	BD_Turn<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD.ms0<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD.ms0p5<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
 	BD.ms0p9<-data.frame(matrix(NA, nrow = length(cladeSet), ncol = 1))
-
+	
 	for (k in 1:length(cladeSet)){
 	cladeSp<-cladeSet[[k]]$tip.label
 		x<-res1[match(cladeSp,rownames(res1)),"DR"]
 		DR_harm[k,] <- 1/(mean(1/x))
-		DR_skew[k,] <- skewness(x)
+		#percentSamp[k,] <- length(which(cladesDR[match(cladeSp,cladesDR$tiplabel),"samp"]=="sampled"))/length(cladeSp)
 		richness[k,] <- length(cladeSp)
-		node <- getMRCA(mamPhy, cladeSp)
+	if(length(cladeSp) > 1){
+		DR_cv[k,] <- (sd(x)/mean(x))*100
+		DR_skew[k,] <- skewness(x)
+		DR_kurt[k,] <- kurtosis(x)
+		node <- getMRCA(simPhy, cladeSp)
 		MRCA[k,] <- btimes[node-5911] #taking the height of SAMPLED tree
+		}
+
 	if (length(cladeSp) > 2) {
 	# Yule model
 		PB_Div[k,]<-ymle(cladeSet[[k]])
@@ -877,38 +1502,30 @@ cladeSet<-allCladeSets[[j]]
 		BD_Lam[k,]<-bd$para[[2]]/(1-bd$para[[1]])
 		BD_Mu[k,]<-bd$para[[1]]*(bd$para[[2]]/(1-bd$para[[1]]))
 		BD_Div[k,]<-bd$para[[2]]
+		BD_Turn[k,]<-bd$para[[1]]
 		# BD Mag and Sand
 		cladeSet[[k]]$root.edge<-0
 	    BD.ms0[k,]<-bd.ms(phy=cladeSet[[k]], missing=0, epsilon=0, crown=TRUE) # Assuming no extinction
     	BD.ms0p5[k,]<-bd.ms(phy=cladeSet[[k]], missing=0, epsilon=0.5, crown=TRUE) # Assuming medium extinction 
      	BD.ms0p9[k,]<-bd.ms(phy=cladeSet[[k]], missing=0, epsilon=0.9, crown=TRUE) # Assuming high extinction
-		} else NULL
+		}
 	}
-	res2<-cbind(DR_harm, DR_skew, richness, MRCA, PB_Div, BD_Lam, BD_Mu, BD_Div, BD.ms0, BD.ms0p5, BD.ms0p9, i, j*5)
-	colnames(res2)<-c("DR_harm","DR_skew", "richness", "MRCA", "PB_Div", "BD_Lam", "BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9", "tree", "slice")
+
+	res2<-cbind.data.frame(DR_harm, DR_skew, DR_kurt, DR_cv, richness, MRCA, PB_Div, BD_Lam, BD_Mu, BD_Div, BD_Turn, BD.ms0, BD.ms0p5, BD.ms0p9, i, j*-5)
+
+	colnames(res2)<-c("DR_harm","DR_skew", "DR_kurt", "DR_cv", "richness", "MRCA", "PB_Div", "BD_Lam", "BD_Mu", "BD_Div", "BD_Turn", "BD.ms0", "BD.ms0p5", "BD.ms0p9", "tree", "time")
+
+	rownames(res2)<-paste(i,"_",j,"_",c(1:length(cladeSet)),sep="") # same as the slicePhy names
 	
-	rownames(res2)<-paste(i,"_",j,"_",c(1:length(res2[,1])),sep="")
+	write.table(res2,paste("MamPhy_SIMS_",sims[z],"_",bbone,"_sample100_",i,"_slice",allCladeSetNames[[j]],"_cladeSTATS_Age-n-Rate_andSingletons.txt",sep=""))
+} # end 1-tree loop across all 14 slices (every 5 Ma)
 
-	write.table(res2,paste("MamPhy_SIMS_",sims[q],"_",bbone,"_sample100_",redos[i],"_slice",allCladeSetNames[[j]],"cladeSTATS.txt",sep=""))
-}
+} # end 3 simulation loop
 
-# create slice phys
-slicePhys<-vector("list",length(allCladeSets))
-for (k in 1:length(allCladeSets)){
-cladeReps<-vector()
-for (j in 1:length(allCladeSets[[k]])){
-	cladeSp<-allCladeSets[[k]][[j]]$tip.label
-	cladeReps[j]<-cladeSp[1]
-	}
-toDrop<-setdiff(mamPhy$tip.label,cladeReps)
-slicePhys[[k]]<-drop.tip(mamPhy,toDrop)
-slicePhys[[k]]$tip.label<-paste(i,"_",k,"_",c(1:length(slicePhys[[k]]$tip.label)),sep="")
-}
+} # end 100-tree loop
 
-# write slice phys
-for(j in 1:length(slicePhys)){
-	write.tree(slicePhys[[j]], file=paste("MamPhy_SIMS_",sims[q],"_",bbone,"_tree_",redos[i],"_slicePhy-5to70Ma_by5.trees",sep=""), append=TRUE)
-}
+
+
 
 #===============
 # For SIMULATIONS-- Now in parallel, and with doing the PGLS also...
@@ -1017,16 +1634,16 @@ for (j in 1:length(results)){
 	#int95s<-intervals(fit,which="var-cov")
 
 	for(k in 1:8){
-	partSlopesPGLS_All[j,k]<-round(sum$tTable[k],digits=3)
+	partSlopesPGLS_All[j,k]<-round(sum$tTable[k],digits=6)
 	}
-	#partSlopesPGLS_All[j,9]<-round(int95s[[1]][1],digits=3)
-	partSlopesPGLS_All[j,10]<-round(sum$modelStruct[[1]][[1]],digits=3)
-	#partSlopesPGLS_All[j,11]<-round(int95s[[1]][3],digits=3)
+	#partSlopesPGLS_All[j,9]<-round(int95s[[1]][1],digits=6)
+	partSlopesPGLS_All[j,10]<-round(sum$modelStruct[[1]][[1]],digits=6)
+	#partSlopesPGLS_All[j,11]<-round(int95s[[1]][3],digits=6)
 	partSlopesPGLS_All[j,12]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_All[j,13]<-round(sum$tTable[13], digits=3)
-	partSlopesPGLS_All[j,14]<-round(sum$tTable[14], digits=3)
-	partSlopesPGLS_All[j,15]<-round(sum$tTable[15], digits=3)
-	partSlopesPGLS_All[j,16]<-round(sum$tTable[16], digits=3)
+	partSlopesPGLS_All[j,13]<-round(sum$tTable[13], digits=6)
+	partSlopesPGLS_All[j,14]<-round(sum$tTable[14], digits=6)
+	partSlopesPGLS_All[j,15]<-round(sum$tTable[15], digits=6)
+	partSlopesPGLS_All[j,16]<-round(sum$tTable[16], digits=6)
 
 	vars<-c("MRCA","DR_harm","DR_skew","PB_Div","BD_Lam","BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9")
 	for(k in 1:length(uniPGLS_allSlopes)){
@@ -1041,11 +1658,11 @@ for (j in 1:length(results)){
 		fit1<-possibleError
 		sum1<-summary(fit1)
 		
-		uniPGLS_allInts[j,k]<-round(sum1$tTable[1], digits=3)
-		uniPGLS_allSlopes[j,k]<-round(sum1$tTable[2], digits=3)
-		uniPGLS_allSEs[j,k]<-round(sum1$tTable[4], digits=3)
-		uniPGLS_allPs[j,k]<-round(sum1$tTable[8], digits=3)
-		uniPGLS_allLams[j,k]<-round(sum1$modelStruct[[1]][[1]], digits=3)
+		uniPGLS_allInts[j,k]<-round(sum1$tTable[1], digits=6)
+		uniPGLS_allSlopes[j,k]<-round(sum1$tTable[2], digits=6)
+		uniPGLS_allSEs[j,k]<-round(sum1$tTable[4], digits=6)
+		uniPGLS_allPs[j,k]<-round(sum1$tTable[8], digits=6)
+		uniPGLS_allLams[j,k]<-round(sum1$modelStruct[[1]][[1]], digits=6)
 	}	
 
 }
@@ -1143,25 +1760,25 @@ for (j in 1:length(results)){
 	fit<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
 	sum<-summary(fit)
 
-	partSlopesPGLS_All[j,1]<-round(sum$coef[[1]],digits=3)
-	partSlopesPGLS_All[j,2]<-round(sum$coef[[2]],digits=3)
-	partSlopesPGLS_All[j,3]<-round(sum$coef[[3]],digits=3)
-	partSlopesPGLS_All[j,4]<-round(sum$coef[[4]],digits=3)
+	partSlopesPGLS_All[j,1]<-round(sum$coef[[1]],digits=6)
+	partSlopesPGLS_All[j,2]<-round(sum$coef[[2]],digits=6)
+	partSlopesPGLS_All[j,3]<-round(sum$coef[[3]],digits=6)
+	partSlopesPGLS_All[j,4]<-round(sum$coef[[4]],digits=6)
 	partSlopesPGLS_All[j,5]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_All[j,6]<-round(sum$tTable[14], digits=3)
-	partSlopesPGLS_All[j,7]<-round(sum$tTable[15], digits=3)
-	partSlopesPGLS_All[j,8]<-round(sum$tTable[16], digits=3)
+	partSlopesPGLS_All[j,6]<-round(sum$tTable[14], digits=6)
+	partSlopesPGLS_All[j,7]<-round(sum$tTable[15], digits=6)
+	partSlopesPGLS_All[j,8]<-round(sum$tTable[16], digits=6)
 
 	form<-(log(richness) ~ MRCA + DR_harm)
 	fit2<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
 	sum<-summary(fit2)
 
-	partSlopesPGLS_12[j,1]<-round(sum$coef[[1]],digits=3)
-	partSlopesPGLS_12[j,2]<-round(sum$coef[[2]],digits=3)
-	partSlopesPGLS_12[j,3]<-round(sum$coef[[3]],digits=3)
+	partSlopesPGLS_12[j,1]<-round(sum$coef[[1]],digits=6)
+	partSlopesPGLS_12[j,2]<-round(sum$coef[[2]],digits=6)
+	partSlopesPGLS_12[j,3]<-round(sum$coef[[3]],digits=6)
 	partSlopesPGLS_12[j,4]<-round(sum$AIC,digits=0)
-	partSlopesPGLS_12[j,5]<-round(sum$tTable[11], digits=3)
-	partSlopesPGLS_12[j,6]<-round(sum$tTable[12], digits=3)
+	partSlopesPGLS_12[j,5]<-round(sum$tTable[11], digits=6)
+	partSlopesPGLS_12[j,6]<-round(sum$tTable[12], digits=6)
 
 	vars<-c("MRCA","DR_harm","DR_skew","PB_Div","BD_Lam","BD_Mu", "BD_Div", "BD.ms0", "BD.ms0p5", "BD.ms0p9")
 	for(k in 1:length(uniPGLS_allSlopes)){
@@ -1169,10 +1786,10 @@ for (j in 1:length(results)){
 		fit1<-gls(form, correlation=corBrownian(phy=cladeData$phy), data=dat, method="ML")
 		sum1<-summary(fit1)
 		
-		uniPGLS_allInts[j,k]<-round(sum1$coef[[1]],digits=3)
-		uniPGLS_allSlopes[j,k]<-round(sum1$coef[[2]],digits=3)
-		uniPGLS_allPs[j,k]<-round(sum1$tTable[8], digits=3)
-		#uniPGLS_allLams[j,k]<-round(sum1$modelStruct[[1]][[1]], digits=3)
+		uniPGLS_allInts[j,k]<-round(sum1$coef[[1]],digits=6)
+		uniPGLS_allSlopes[j,k]<-round(sum1$coef[[2]],digits=6)
+		uniPGLS_allPs[j,k]<-round(sum1$tTable[8], digits=6)
+		#uniPGLS_allLams[j,k]<-round(sum1$modelStruct[[1]][[1]], digits=6)
 	}	
 
 }

@@ -305,8 +305,8 @@ rownames(dat1)<-tipDataAll$tiplabel
 cladeData<-treedata(mamMCC,na.omit(dat1)) 
 dat<-as.data.frame(cladeData$data)
 
-pdf(file="logTipDR_mean10k_vs_LogDispDistAll_plot.pdf")
-form<-(log(tipDR_mean10k) ~ log(DispDistAll_km_ext))
+pdf(file="logTipDR_mean10k_vs_DispDistAll_plot.pdf")
+form<-(log(tipDR_mean10k) ~ (DispDistAll_km_ext))
 plot(form, data=dat)
 fit<-gls(form, data=dat)
 sum<-summary(fit)
@@ -314,8 +314,42 @@ dev.off()
 
 
 fitPagelModel<-gls(form, data=dat, correlation=corPagel(value=1,phy=cladeData$phy))
-sumPagel<-summary(fitPagelModel)
+sumPagel0p5<-summary(fitPagelModel)
 
+
+sumPagel<-summary(fitPagelModel) # using a 1.0 starting val for lambda
+
+pdf(file="TipDR_mean10k_vs_LogDispDistAll_plot_wPagelLine_expTrans.pdf")
+form<-(log(tipDR_mean10k) ~ log(DispDistAll_km_ext))
+plot((tipDR_mean10k) ~ log(DispDistAll_km_ext), data=dat)
+
+	a=round(sumPagel$coef[1],2)
+	b=round(sumPagel$coef[2],2)
+	X=seq(min(log(dat$DispDistAll_km_ext)),max(log(dat$DispDistAll_km_ext)),length.out=20)
+	lines(x=X,y=exp(b*X+a),col="black", lwd=4,lty=1) 
+
+lam=round(sumPagel$modelStruct[[1]][1],2)
+P=round(sumPagel$tTable[8], 5)
+mtext(side=3, text=bquote("lam" ~ "=" ~ (lam) ~~ "P" ~ "=" ~ (P))),adj=0, cex=0.7)
+
+dev.off()
+
+
+
+
+
+	mtext(side=3, text=bquote(bold(.(cat) ~ n ~ "=" ~ .(n) ~~~~ R^2 ~ "=" ~ .(R2))),adj=0, cex=0.7)
+
+	Y=log10(dat$HomeRange_Indiv_km2)
+	text(min(X),max(Y),label=bquote(log10 ~ km^2 ~ bold(y ~ "=" ~ .(a)+.(b)*x)~log10 ~ kg),adj=0, cex=0.8)
+
+
+pagelRes<-resid(fitPagelModel)
+
+pdf(file="logTipDR_mean10k_vs_LogDispDistAll_plot_residPagel.pdf")
+plot(pagelRes ~ log(dat$DispDistAll_km_ext), ylab="Residuals") 
+abline(0, 0)          
+dev.off()
 
 
 # as continuous...
