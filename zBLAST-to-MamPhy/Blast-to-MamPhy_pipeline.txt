@@ -1,0 +1,182 @@
+# Written by: Nathan S Upham
+# Updated last: Sept 2015
+##########
+
+This is a pipeline for doing the following things:
+(1) Downloading an up-to-date local version of BLAST from the NCBI FTP site
+(2) Download an up-to-date listing of MAMMALIA (or other taxon) GI numbers
+(3) Download the latest version of BLAST command line from NCBI FTP
+(4) Query the local NT database using BLAST and per-gene BAITS
+(5) Combine the per-query XML2 output into per-gene outputs using xinclude file
+(6) Parse the combined per-gene XM2 outputs into columns-of-interest using xtract
+(7) Sort and remove redundancy by gene accession number; 
+	keeping the longest hit per accession, and sorting by taxid
+(8) Count the number of lines per file; equals the number of unique gene accessions
+	per-gene on NCBI for given clade (here, Mammalia)
+(9) Count the number of redundant taxid entries; equals the number of gene accessions
+	per-taxon per-gene on NCBI for given clade (here, Mammalia)
+(10) Reduce to the unique longest gene accession per-taxon per-gene (retain > 200bp only)
+(11) Count the number of lines per file; equals the number of taxa sampled per gene for 
+	given clade (here, Mammalia)
+(12) Reformat into FASTA format, retaining info in per-sequence headers
+
+###
+# Main things you need to start:
+##
+
+1) Per-gene baits: These are pre-vetted sequences in FASTA format that have previously been aligned to confirm homology to your target locus, and that cover the full genetic diversity of your group of interest (e.g., 1 representative per family, subfamily, tribe, etc).  
+
+2) The list of GI numbers subset to your group of interest (e.g., Mammalia, Aves) and your last date of download (e.g., new seqs since 2011)
+
+
+###
+# (1) Download the NCBI database locally:
+##
+wget ftp://ftp.ncbi.nih.gov/blast/db/nt.*.tar.gz
+gunzip nt.*.tar.gz
+tar -xzf 
+
+###
+# (2) Download listing of MAMMALIA GI numbers to FILTER the NT searches
+# **INSERT today's date**
+# * For mammals is ~40 million entries; 400 MB file... takes ~4 hours to download
+## 
+# Mammalia = "txid40674[ORGN]"
+
+esearch -db nucleotide -query "txid40674[ORGN]" | efetch -format uid > mam-nt-sequence.gi_25Aug2015.txt
+
+
+###
+# (3) Download the BLAST command line tools (updated version)
+# **Need version 2.2.31 or above to use the XML2 output option
+##
+wget ftp://ftp.ncbi.nlm.nih.gov/blast/executables/LATEST/ncbi-blast-2.2.31+-x64-linux.tar.gz
+tar zxvpf ncbi-blast-2.2.31+-x64-linux.tar.gz
+export PATH="$PATH:$HOME/ncbi-blast-2.2.31+/bin"
+	## This added it to the current path
+echo $PATH
+	## Confirm PATH
+
+###
+# (4) Query the local NT db using per-gene BAIT files (=FASTA files, 1 taxon per family)
+# ** Output the results in XML2 format for parsing with TAXONOMY info
+# ** Note: per-gene BAITS are pre-prepared to cover gene diversity in group (e.g., one
+#	 bait per family in group of interest
+##
+# Given a folder full of .fas files (one per gene) containing the BAITS...
+
+for f in *.fas; do /home/nateu/ncbi-blast-2.2.31+/bin/blastn -db nt -num_threads 12 -max_target_seqs 1000000 -outfmt 14 -query $f -gilist mam-nt-sequence.gi_25Aug2015.txt -out Mammalia_byFAM_RES_$f.XML2 -evalue 10; done
+
+# This is going to output 1 file per query per gene; so that is hundreds of files.
+# Advantage: XML2 already includes the taxonomy.
+# Move them to a folder
+
+mv Mammalia_byFAM_RES_* results_xml2/
+
+###
+# (5) Combine per-query XML2 outputs into per-gene outputs using xmllint and xinclude file
+##
+GENES='A2AB ADORA3 ADRB2 APOB APP ATP7 BCHE BDNF BMI1 BRCA1 BRCA2 CNR1 COI CREM CYTB DMP1 EDG1 ENAM FBN1 GHR IRBP ND1 ND2 PLCB4 PNOC RAG1 RAG2 TTN TYR1 VWF'
+
+for GENE in $GENES; do xmllint -xinclude Mammalia_byFAM_RES__$GENE.fas.XML2 > Mammalia_byFAM_RES_$GENE.xml2; done
+
+# Clean up that folder (deleting the extra files):
+
+rm *.fas.XML2
+rm *.xml
+
+###
+# (6) Parse the combined per-gene XM2 outputs into columns-of-interest w/ 'xtract' utility
+# ** Do this based on the LAST entry in each field; other taxids and accessions from 
+# 	identically matching hits will also be listed, so take the last entry to simplify
+##
+GENES='A2AB ADORA3 ADRB2 APOB APP ATP7 BCHE BDNF BMI1 BRCA1 BRCA2 CNR1 COI CREM CYTB DMP1 EDG1 ENAM FBN1 GHR IRBP ND1 ND2 PLCB4 PNOC RAG1 RAG2 TTN TYR1 VWF'
+
+for GENE in $GENES; do cat Mammalia_byFAM_RES_$GENE.xml2 | xtract -pattern Hit -last taxid sciname accession align-len hseq > Mammalia_byFAM_RES-parseLast_$GENE.txt; done
+	
+
+###
+# (7) Sort and remove redundancy by gene accession number; keeping the longest hit per
+# 	accession, and sorting by taxid
+##
+GENES='A2AB ADORA3 ADRB2 APOB APP ATP7 BCHE BDNF BMI1 BRCA1 BRCA2 CNR1 COI CREM CYTB DMP1 EDG1 ENAM FBN1 GHR IRBP ND1 ND2 PLCB4 PNOC RAG1 RAG2 TTN TYR1 VWF'
+
+for GENE in $GENES; do cat Mammalia_byFAM_RES-parseLast_$GENE.txt | tr " " "_" | awk '{print $4, $3, $1, $2, $5}' | sort -k1,1nr | awk '!_[$(2)]++' | sort -t " " -k3,3n > Mammalia_byFAM_RES-pLast-uniqueLongest-perHit_$GENE.txt; done
+
+
+###
+# (8) Count the number of lines per file = Num unique gene accessions per-gene on NCBI for
+#	given clade (here, Mammalia)
+##
+GENES='A2AB ADORA3 ADRB2 APOB APP ATP7 BCHE BDNF BMI1 BRCA1 BRCA2 CNR1 COI CREM CYTB DMP1 EDG1 ENAM FBN1 GHR IRBP ND1 ND2 PLCB4 PNOC RAG1 RAG2 TTN TYR1 VWF'
+
+for GENE in $GENES; do wc -l Mammalia_byFAM_RES-pLast-uniqueLongest-perHit_$GENE.txt; done
+
+
+###
+# (9) Count the number of redundant taxid entries = Num gene accessions per-taxon per-gene 
+#	on NCBI for given clade (here, Mammalia)
+##
+GENES='A2AB ADORA3 ADRB2 APOB APP ATP7 BCHE BDNF BMI1 BRCA1 BRCA2 CNR1 COI CREM CYTB DMP1 EDG1 ENAM FBN1 GHR IRBP ND1 ND2 PLCB4 PNOC RAG1 RAG2 TTN TYR1 VWF'
+
+for GENE in $GENES; do cat Mammalia_byFAM_RES-pLast-uniqueLongest-perHit_$GENE.txt | cut -d" " -f3 | uniq -c | sort -nr > Counts_pLast-numGenes-per-taxon_$GENE.txt; done
+
+
+###
+# (10) Reduce to the unique longest gene accession per-taxon per-gene = Num taxa sampled
+#	per gene for given clade (here, Mammalia)
+# ** Also restricting to length cutoff of 200 bp
+##
+GENES='A2AB ADORA3 ADRB2 APOB APP ATP7 BCHE BDNF BMI1 BRCA1 BRCA2 CNR1 COI CREM CYTB DMP1 EDG1 ENAM FBN1 GHR IRBP ND1 ND2 PLCB4 PNOC RAG1 RAG2 TTN TYR1 VWF'
+
+for GENE in $GENES; do cat Mammalia_byFAM_RES-pLast-uniqueLongest-perHit_$GENE.txt | sort -t " " -k1,1nr | awk '!_[$3]++' | awk '$1 >= 200 {print $0}' > Mammalia_byFAM_RES-pLast-uniqueLongest-perTaxon_$GENE.txt; done
+
+
+###
+# (11) Count the number of lines per file = Num taxa sampled per gene for given clade 
+# 	(here, Mammalia)
+##
+GENES='A2AB ADORA3 ADRB2 APOB APP ATP7 BCHE BDNF BMI1 BRCA1 BRCA2 CNR1 COI CREM CYTB DMP1 EDG1 ENAM FBN1 GHR IRBP ND1 ND2 PLCB4 PNOC RAG1 RAG2 TTN TYR1 VWF'
+
+for GENE in $GENES; do wc -l Mammalia_byFAM_RES-pLast-uniqueLongest-perTaxon_$GENE.txt; done
+
+###
+# (12) Re-label the NCBI sequence names according to our MASTER taxonomy match-up.
+#	By joining on NCBI_ID, then reducing redundancy by taking longest seq per IUCN name
+#	Results in: IUCN_SciName IUCN_FAM IUCN_ORD IUCN_ID NCBI_ID GeneAcc GeneLength
+##	
+# First re-order the master list for joining by NCBI TAXON ID:
+##
+cat MASTER-mammals-tax_NCBI-RENAME_5452.txt | awk '{print $6,$4,$3,$2,$1}' | sort -b -k1 > temp2.txt
+
+# Then PREP each gene file for joining:
+##
+GENES='A2AB ADRB2 APOB APP ATP7 BCHE BDNF BRCA1 BRCA2 CNR1 CREM DMP1 EDG1 ENAM FBN1 GHR IRBP PLCB4 RAG1 RAG2 TTN VWF'
+GENES='ADORA3 BMI1 COI CYTB ND1 ND2 PNOC TYR1'
+
+for GENE in $GENES; do cat Mammalia_byFAM_RES-pLast-uniqueLongest-perTaxon_$GENE.txt | awk '{print $3,$4,$2,$1,$5}' | sort -b -k1 > temp-RENAME_$GENE.txt; done
+
+# Join by NCBI ID, discarding the "0" unmatched NCBI taxa = taxa that were unable to be
+# matched to the master list because of ambiguity
+##
+for GENE in $GENES; do join -a1 -e0 -o 0,2.2,2.3,2.4,2.5,1.3,1.4,1.5 -11 -21 temp-RENAME_$GENE.txt temp2.txt | awk '$2 > 0 {print $0}' > Mammalia_byFAM_RES-pLast-z-uniqLong-perTaxonNCBI_MASTERtax_$GENE.txt; done
+
+# Reduce redundancy based on the IUCN_SciName field-- first sorting by LONGEST seqs, 
+# then taking the unique of the IUCN_SciName:
+##
+for GENE in $GENES; do cat Mammalia_byFAM_RES-pLast-z-uniqLong-perTaxonNCBI_MASTERtax_$GENE.txt | sort -k7nr | awk '!_[$2]++' | sort -k2 > Mammalia_byFAM_RES-pLast-z-uniqLong-perTaxonZ_MASTERtax_$GENE.txt; done
+
+# Count num lines per file = Num taxa sampled per gene for given clade 
+##
+for GENE in $GENES; do wc -l Mammalia_byFAM_RES-pLast-z-uniqLong-perTaxonZ_MASTERtax_$GENE.txt; done
+
+
+###
+# (13) Reformat into FASTA format, retaining info in per-sequence headers
+##
+GENES='A2AB ADORA3 ADRB2 APOB APP ATP7 BCHE BDNF BMI1 BRCA1 BRCA2 CNR1 COI CREM CYTB DMP1 EDG1 ENAM FBN1 GHR IRBP ND1 ND2 PLCB4 PNOC RAG1 RAG2 TTN TYR1 VWF'
+
+for GENE in $GENES; do cat Mammalia_byFAM_RES-pLast-z-uniqLong-perTaxonZ_MASTERtax_$GENE.txt | awk '{print ">" $2 "__" $3 "__" $4 "__" $5 "__" $1 "__" $6 "__" $7 "\n" $8}' > Mammalia_readyToAlign_zMASTERtax_$GENE.fas; done
+
+
+# Now align by codon if coding (Mafft, Macse) or normally if non-coding (Prank, TrimAl) and search for stop codons, rogue sequences (RogueNaRok), misidentified sequences, etc with interations between gene trees (RAxML), manual error checking and alignments.  Good luck!
